@@ -1,0 +1,3 @@
+[submodule "comic_text_detector"]
+	path = comic_text_detector
+	url = https://github.com/tiagopvianna/comic-text-detector.git

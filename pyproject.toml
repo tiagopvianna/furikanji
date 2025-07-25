@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "furikanji"
+version = "0.1.0"
+description = "Adds furigana to kanji in images."
+requires-python = ">=3.8"
+dependencies = [
+    "fire",
+    "loguru",
+    "manga-ocr>=0.1.7",
+    "natsort",
+    "numpy",
+    "opencv-python>=4.1.2",
+    "Pillow>=7.1.2",
+    "pyclipper",
+    "requests",
+    "scipy",
+    "setuptools",
+    "shapely",
+    "torch>=1.7.0",
+    "torchsummary",
+    "torchvision>=0.8.1",
+    "transformers>=4.25.0",
+    "tqdm>=4.41.0",
+    "yattag",
+]
+
+[tool.setuptools.packages.find]
+# This tells setuptools to find packages in the src directory
+# and also to find the comic_text_detector package at the root
+where = ["src", "."]
+include = ["furikanji*", "comic_text_detector*"]
+exclude = ["comic_text_detector.tests*"]
