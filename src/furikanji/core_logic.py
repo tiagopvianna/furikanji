@@ -46,7 +46,7 @@ class CoreLogic:
             lines = block.get("lines", [])
             lines_coords = block.get("lines_coords", [])
             detected_size = block.get("font_size", 24)
-            font = self._load_japanese_font(detected_size - 8)
+            font = self._load_japanese_font(detected_size - 14)
             furigana_size = 8
             furigana_font = self._load_japanese_font(furigana_size)
 
@@ -166,7 +166,7 @@ class CoreLogic:
                     and (jaconv.kata2hira(getattr(word.feature, "kana", "")) != word.surface)
                     for word in tagger(line_text)
                 )
-                required_space = furigana_size + 6 if has_kanji else 0
+                required_space = furigana_size + 2 if has_kanji else 0
                 lines_info.append({
                     "index": counter,
                     "x_min": x_min,

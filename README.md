@@ -2,11 +2,19 @@
 
 Adds furigana to kanji in images.
 
+**Input Image:**
+
+![Input](example/sample.png)
+
+**Output Image:**
+
+![Output](example/result_overlay.jpg)
+
 ## Setup
 
 1. **Clone the repository:**
    ```bash
-   git clone --recurse-submodules https://github.com/your-username/furikanji.git
+   git clone --recurse-submodules https://github.com/tiagopvianna/furikanji.git
    cd furikanji
    ```
 
@@ -18,5 +26,5 @@ Adds furigana to kanji in images.
 ## Usage
 
 ```bash
-python -m furikanji.process_image --image_path <path_to_your_image>
+python -m src.furikanji.process_image <image_path> --output_path <output_path>
 ```
