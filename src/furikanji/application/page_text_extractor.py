@@ -31,6 +31,16 @@ class PageTextExtractor:
         text_localizer: TextLocalizerAdapter = None,
         text_transcriber: TextTranscriberAdapter = None,
     ):
+        """
+        Args:
+            text_height: Target transformed line height used for localization crops.
+            max_ratio_vert: Max width/height ratio for vertical lines before splitting.
+            max_ratio_hor: Max width/height ratio for horizontal lines before splitting.
+            anchor_window: Split search window multiplier around each split anchor.
+            disable_ocr: If True, skip localization/transcription and return only page metadata.
+            text_localizer: Adapter that localizes text regions/lines on the page image.
+            text_transcriber: Adapter that transcribes line image crops into text.
+        """
         self.text_height = text_height
         self.max_ratio_vert = max_ratio_vert
         self.max_ratio_hor = max_ratio_hor
@@ -54,20 +64,6 @@ class PageTextExtractor:
         result["blocks"] = self._transcribe_localized_regions(localization.localized_text_regions)
 
         return result
-
-    @staticmethod
-    def _read_image(img_path):
-        """Read input image and validate it is decodable."""
-        image = imread(img_path)
-        if image is None:
-            raise InvalidImage()
-        return image
-
-    @staticmethod
-    def _initialize_result(image):
-        """Initialize output container with page-level metadata."""
-        height, width, *_ = image.shape
-        return {"img_width": width, "img_height": height, "blocks": []}
 
     def _localize_text(self, image):
         """Run text localization adapter and return localization result."""
@@ -118,11 +114,6 @@ class PageTextExtractor:
         """Choose split ratio threshold based on line orientation."""
         return self.max_ratio_vert if is_vertical else self.max_ratio_hor
 
-    @staticmethod
-    def _serialize_line_outline(line_outline):
-        """Convert outline to plain list for JSON-friendly serialization."""
-        return line_outline.tolist() if hasattr(line_outline, "tolist") else line_outline
-
     def _split_line_image_for_transcription(self, line_image, line_text_mask, max_ratio=16, anchor_window=2):
         """Split wide lines at low-density valleys before OCR."""
         ratio = self._line_aspect_ratio(line_image)
@@ -143,10 +134,29 @@ class PageTextExtractor:
         return np.split(line_image, split_points, axis=1), split_points
 
     @staticmethod
+    def _read_image(img_path):
+        """Read input image and validate it is decodable."""
+        image = imread(img_path)
+        if image is None:
+            raise InvalidImage()
+        return image
+
+    @staticmethod
+    def _initialize_result(image):
+        """Initialize output container with page-level metadata."""
+        height, width, *_ = image.shape
+        return {"img_width": width, "img_height": height, "blocks": []}
+
+    @staticmethod
     def _line_aspect_ratio(line_image):
         """Return width/height ratio for a transformed line image."""
         h, w, *_ = line_image.shape
         return w / h
+
+    @staticmethod
+    def _serialize_line_outline(line_outline):
+        """Convert outline to plain list for JSON-friendly serialization."""
+        return line_outline.tolist() if hasattr(line_outline, "tolist") else line_outline
 
     @staticmethod
     def _compute_split_anchors(width, num_splits):
