@@ -1,11 +1,13 @@
+from dataclasses import dataclass
+from typing import List, TypedDict
+
 import cv2
 import numpy as np
-from PIL import Image
 from loguru import logger
+from PIL import Image
 from scipy.signal.windows import gaussian
 
 from src.furikanji.application.interfaces import (
-    LocalizedTextLine,
     LocalizedTextRegion,
     TextLocalizerAdapter,
     TextTranscriberAdapter,
@@ -18,18 +20,44 @@ class InvalidImage(Exception):
         super().__init__(message)
 
 
+LineImage = np.ndarray
+LineTextMask = np.ndarray
+LineCrops = List[np.ndarray]
+SplitPoints = List[int]
+
+
+class OutputBlock(TypedDict):
+    box: List[int]
+    vertical: bool
+    font_size: int
+    lines_coords: List[list]
+    lines: List[str]
+
+
+class PageExtractionResultDict(TypedDict):
+    img_width: int
+    img_height: int
+    blocks: List[OutputBlock]
+
+
+@dataclass(frozen=True)
+class LineSplitResult:
+    line_crops: LineCrops
+    split_points: SplitPoints
+
+
 class PageTextExtractor:
     """Extracts localized regions and transcribed text from a page image."""
 
     def __init__(
         self,
+        text_localizer: TextLocalizerAdapter,
+        text_transcriber: TextTranscriberAdapter,
         text_height=64,
         max_ratio_vert=16,
         max_ratio_hor=8,
         anchor_window=2,
         disable_ocr=False,
-        text_localizer: TextLocalizerAdapter = None,
-        text_transcriber: TextTranscriberAdapter = None,
     ):
         """
         Args:
@@ -46,37 +74,36 @@ class PageTextExtractor:
         self.max_ratio_hor = max_ratio_hor
         self.anchor_window = anchor_window
         self.disable_ocr = disable_ocr
+        self.text_localizer = text_localizer
+        self.text_transcriber = text_transcriber
 
-        if not self.disable_ocr:
-            if text_localizer is None or text_transcriber is None:
-                raise ValueError("text_localizer and text_transcriber are required when OCR is enabled")
-            self.text_localizer = text_localizer
-            self.text_transcriber = text_transcriber
-
-    def __call__(self, img_path):
+    def __call__(self, img_path: str) -> PageExtractionResultDict:
         """Run localization/transcription and return the current result schema."""
-        image = self._read_image(img_path)
-        result = self._initialize_result(image)
+        image = imread(img_path)
+        if image is None:
+            raise InvalidImage()
+        height, width, *_ = image.shape
+        result: PageExtractionResultDict = {"img_width": width, "img_height": height, "blocks": []}
         if self.disable_ocr:
             return result
 
-        localization = self._localize_text(image)
-        result["blocks"] = self._transcribe_localized_regions(localization.localized_text_regions)
+        logger.info("Running text detection")
+        localization = self.text_localizer.localize_text(image)
+        result["blocks"] = self._transcribe_localized_regions(
+            localization.localized_text_regions
+        )
 
         return result
 
-    def _localize_text(self, image):
-        """Run text localization adapter and return localization result."""
-        logger.info("Running text detection")
-        return self.text_localizer.localize_text(image)
-
-    def _transcribe_localized_regions(self, localized_text_regions):
+    def _transcribe_localized_regions(
+        self, localized_text_regions: List[LocalizedTextRegion]
+    ) -> List[OutputBlock]:
         """Serialize and transcribe all localized regions."""
         return [self._build_region_result(region) for region in localized_text_regions]
 
-    def _build_region_result(self, region: LocalizedTextRegion):
+    def _build_region_result(self, region: LocalizedTextRegion) -> OutputBlock:
         """Serialize one localized region and transcribe its lines."""
-        result_blk = {
+        result_block = {
             "box": list(region.bounding_box),
             "vertical": region.is_vertical,
             "font_size": region.estimated_font_size,
@@ -85,86 +112,84 @@ class PageTextExtractor:
         }
 
         for line in region.lines:
-            line_text = self._transcribe_localized_line(line, region.is_vertical)
-            result_blk["lines_coords"].append(self._serialize_line_outline(line.line_outline))
-            result_blk["lines"].append(line_text)
+            line_text = self._transcribe_line_image(
+                line_image=line.line_image,
+                line_text_mask=line.line_text_mask,
+                is_vertical=region.is_vertical,
+            )
+            result_block["lines_coords"].append(line.line_outline)
+            result_block["lines"].append(line_text)
 
-        return result_blk
+        return result_block
 
-    def _transcribe_localized_line(self, line: LocalizedTextLine, is_vertical: bool):
-        """Split line image when needed, then OCR each split."""
-        line_crops, _ = self._split_line_image_for_transcription(
-            line_image=line.line_image,
-            line_text_mask=line.line_text_mask,
+    def _transcribe_line_image(
+        self,
+        line_image: LineImage,
+        line_text_mask: LineTextMask,
+        is_vertical: bool,
+    ) -> str:
+        """Split line image when needed, then OCR and join all split pieces."""
+        split_result = self._split_line_image_for_transcription(
+            line_image=line_image,
+            line_text_mask=line_text_mask,
             max_ratio=self._max_ratio_for_orientation(is_vertical),
             anchor_window=self.anchor_window,
         )
-        return self._transcribe_line_crops(line_crops, is_vertical)
-
-    def _transcribe_line_crops(self, line_crops, is_vertical):
-        """Apply OCR to split crops, rotating vertical crops first."""
-        line_text = ""
-        for line_crop in line_crops:
+        transcribed_text = ""
+        for line_crop in split_result.line_crops:
             if is_vertical:
                 line_crop = cv2.rotate(line_crop, cv2.ROTATE_90_CLOCKWISE)
-            line_text += self.text_transcriber.transcribe_text(Image.fromarray(line_crop))
-        return line_text
+            transcribed_text += self.text_transcriber.transcribe_text(
+                Image.fromarray(line_crop)
+            )
+        return transcribed_text
 
-    def _max_ratio_for_orientation(self, is_vertical):
+    def _max_ratio_for_orientation(self, is_vertical: bool) -> int:
         """Choose split ratio threshold based on line orientation."""
         return self.max_ratio_vert if is_vertical else self.max_ratio_hor
 
-    def _split_line_image_for_transcription(self, line_image, line_text_mask, max_ratio=16, anchor_window=2):
+    def _split_line_image_for_transcription(
+        self,
+        line_image: LineImage,
+        line_text_mask: LineTextMask,
+        max_ratio: int = 16,
+        anchor_window: int = 2,
+    ) -> LineSplitResult:
         """Split wide lines at low-density valleys before OCR."""
-        ratio = self._line_aspect_ratio(line_image)
+        line_height, line_width, *_ = line_image.shape
+        ratio = line_width / line_height
         if ratio <= max_ratio:
-            return [line_image], []
+            return LineSplitResult(line_crops=[line_image], split_points=[])
 
-        textheight = line_image.shape[0]
+        textheight = line_height
         smoothing_kernel = gaussian(textheight * 2, textheight / 8)
         num_splits = int(np.ceil(ratio / max_ratio))
-        split_anchors = self._compute_split_anchors(width=line_image.shape[1], num_splits=num_splits)
-        line_density = self._compute_line_density(line_text_mask=line_text_mask, smoothing_kernel=smoothing_kernel)
+        split_anchors = self._compute_split_anchors(
+            width=line_width, num_splits=num_splits
+        )
+        line_density = self._compute_line_density(
+            line_text_mask=line_text_mask, smoothing_kernel=smoothing_kernel
+        )
         split_points = self._find_split_points(
             split_anchors=split_anchors,
             line_density=line_density,
             window_size=anchor_window * textheight,
-            width=line_image.shape[1],
+            width=line_width,
         )
-        return np.split(line_image, split_points, axis=1), split_points
+        return LineSplitResult(
+            line_crops=list(np.split(line_image, split_points, axis=1)),
+            split_points=split_points,
+        )
 
     @staticmethod
-    def _read_image(img_path):
-        """Read input image and validate it is decodable."""
-        image = imread(img_path)
-        if image is None:
-            raise InvalidImage()
-        return image
-
-    @staticmethod
-    def _initialize_result(image):
-        """Initialize output container with page-level metadata."""
-        height, width, *_ = image.shape
-        return {"img_width": width, "img_height": height, "blocks": []}
-
-    @staticmethod
-    def _line_aspect_ratio(line_image):
-        """Return width/height ratio for a transformed line image."""
-        h, w, *_ = line_image.shape
-        return w / h
-
-    @staticmethod
-    def _serialize_line_outline(line_outline):
-        """Convert outline to plain list for JSON-friendly serialization."""
-        return line_outline.tolist() if hasattr(line_outline, "tolist") else line_outline
-
-    @staticmethod
-    def _compute_split_anchors(width, num_splits):
+    def _compute_split_anchors(width: int, num_splits: int) -> np.ndarray:
         """Compute equally spaced x anchors where splits may occur."""
         return np.linspace(0, width, num_splits + 1)[1:-1]
 
     @staticmethod
-    def _compute_line_density(line_text_mask, smoothing_kernel):
+    def _compute_line_density(
+        line_text_mask: LineTextMask, smoothing_kernel: np.ndarray
+    ) -> np.ndarray:
         """Build a smoothed 1D density signal from line text mask."""
         line_density = line_text_mask.sum(axis=0)
         line_density = np.convolve(line_density, smoothing_kernel, "same")
@@ -172,7 +197,12 @@ class PageTextExtractor:
         return line_density
 
     @staticmethod
-    def _find_split_points(split_anchors, line_density, window_size, width):
+    def _find_split_points(
+        split_anchors: np.ndarray,
+        line_density: np.ndarray,
+        window_size: int,
+        width: int,
+    ) -> SplitPoints:
         """Select split x positions near anchors at local density minima."""
         split_points = []
         for anchor in split_anchors:

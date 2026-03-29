@@ -7,7 +7,7 @@ from PIL import Image
 
 @dataclass(frozen=True)
 class LocalizedTextLine:
-    line_outline: np.ndarray
+    line_outline: List[List[float]]
     line_image: np.ndarray
     line_text_mask: np.ndarray
 

@@ -1,15 +1,17 @@
 import torch
 
+from src.furikanji.adapters.model_cache_adapter import ModelCacheAdapter
 from src.furikanji.application.interfaces import (
     LocalizedTextLine,
     LocalizedTextRegion,
     TextLocalizationResult,
 )
-from src.furikanji.adapters.model_cache_adapter import ModelCacheAdapter
 
 
 class ComicTextDetectorLocalizer:
-    def __init__(self, input_size=1024, text_height=64, force_cpu=False, cache_adapter=None):
+    def __init__(
+        self, input_size=1024, text_height=64, force_cpu=False, cache_adapter=None
+    ):
         from comic_text_detector.inference import TextDetector
 
         if cache_adapter is None:
@@ -26,16 +28,23 @@ class ComicTextDetectorLocalizer:
         )
 
     def localize_text(self, image):
-        _, refined_mask, text_blocks = self._detector(image, refine_mode=1, keep_undetected_mask=True)
+        _, refined_mask, text_blocks = self._detector(
+            image, refine_mode=1, keep_undetected_mask=True
+        )
         localized_text_regions = []
         for blk in text_blocks:
             lines = []
             for line_idx, line_outline in enumerate(blk.lines_array()):
-                line_image = blk.get_transformed_region(image, line_idx, self.text_height)
-                line_text_mask = blk.get_transformed_region(refined_mask, line_idx, self.text_height)
+                line_image = blk.get_transformed_region(
+                    image, line_idx, self.text_height
+                )
+                line_text_mask = blk.get_transformed_region(
+                    refined_mask, line_idx, self.text_height
+                )
+                line_outline_list = line_outline.tolist()
                 lines.append(
                     LocalizedTextLine(
-                        line_outline=line_outline,
+                        line_outline=line_outline_list,
                         line_image=line_image,
                         line_text_mask=line_text_mask,
                     )
