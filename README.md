@@ -26,5 +26,5 @@ Adds furigana to kanji in images.
 ## Usage
 
 ```bash
-python -m src.furikanji.process_image <image_path> --output_path <output_path>
+python -m src.furikanji.main <image_path> --output_path <output_path>
 ```
