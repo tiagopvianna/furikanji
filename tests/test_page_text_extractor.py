@@ -3,19 +3,25 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.furikanji.application.interfaces import TextLocalizationResult
+from src.furikanji.application.interfaces import (
+    LocalizedTextLine,
+    LocalizedTextRegion,
+    TextLocalizationResult,
+)
 from src.furikanji.application.page_text_extractor import PageTextExtractor
 
 
 class FakeTextDetector:
-    def __init__(self, blocks):
-        self._blocks = blocks
+    def __init__(self, localized_text_regions):
+        self._localized_text_regions = localized_text_regions
 
     def localize_text(self, image):
         h, w = image.shape[:2]
-        mask = np.zeros((h, w), dtype=np.uint8)
-        mask_refined = np.zeros((h, w), dtype=np.uint8)
-        return TextLocalizationResult(mask=mask, refined_mask=mask_refined, text_blocks=self._blocks)
+        text_mask = np.zeros((h, w), dtype=np.uint8)
+        return TextLocalizationResult(
+            text_mask=text_mask,
+            localized_text_regions=self._localized_text_regions,
+        )
 
 
 class FakeTextRecognizer:
@@ -26,20 +32,6 @@ class FakeTextRecognizer:
     def transcribe_text(self, image_crop):
         self.calls += 1
         return self.text
-
-
-class FakeBlock:
-    def __init__(self, vertical=False, font_size=24):
-        self.xyxy = np.array([1, 2, 20, 22], dtype=np.int32)
-        self.vertical = vertical
-        self.font_size = font_size
-        self._line = np.array([[1.0, 2.0], [20.0, 2.0], [20.0, 22.0], [1.0, 22.0]], dtype=np.float32)
-
-    def lines_array(self):
-        return [self._line]
-
-    def get_transformed_region(self, img, line_idx, textheight):
-        return np.ones((textheight, textheight // 2, 3), dtype=np.uint8) * 255
 
 
 class TestPageTextExtractor(unittest.TestCase):
@@ -57,8 +49,18 @@ class TestPageTextExtractor(unittest.TestCase):
     @patch("src.furikanji.application.page_text_extractor.imread")
     def test_uses_injected_adapters_to_build_output(self, mock_imread):
         mock_imread.return_value = np.zeros((30, 40, 3), dtype=np.uint8)
-        fake_block = FakeBlock(vertical=False, font_size=24)
-        detector = FakeTextDetector([fake_block])
+        fake_line = LocalizedTextLine(
+            line_outline=np.array([[1.0, 2.0], [20.0, 2.0], [20.0, 22.0], [1.0, 22.0]], dtype=np.float32),
+            line_image=np.ones((16, 8, 3), dtype=np.uint8) * 255,
+            line_text_mask=np.ones((16, 8), dtype=np.uint8) * 255,
+        )
+        fake_region = LocalizedTextRegion(
+            bounding_box=[1, 2, 20, 22],
+            is_vertical=False,
+            estimated_font_size=24,
+            lines=[fake_line],
+        )
+        detector = FakeTextDetector([fake_region])
         recognizer = FakeTextRecognizer("こんにちは")
         ocr = PageTextExtractor(
             disable_ocr=False,

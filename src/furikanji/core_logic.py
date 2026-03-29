@@ -136,11 +136,13 @@ class CoreLogic:
         if self.mpocr is None:
             extractor_kwargs = dict(self.kwargs)
             detector_input_size = extractor_kwargs.pop("detector_input_size", 1024)
+            text_height = extractor_kwargs.get("text_height", 64)
             text_localizer = None
             text_transcriber = None
             if not self.disable_ocr:
                 text_localizer = ComicTextDetectorLocalizer(
                     input_size=detector_input_size,
+                    text_height=text_height,
                     force_cpu=self.force_cpu,
                 )
                 text_transcriber = MangaOcrTextTranscriber(
