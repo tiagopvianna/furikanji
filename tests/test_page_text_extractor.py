@@ -4,7 +4,7 @@ from unittest.mock import patch
 import numpy as np
 
 from src.furikanji.adapters.interfaces import TextLocalizationResult
-from src.furikanji.manga_page_ocr import MangaPageOcr
+from src.furikanji.page_text_extractor import PageTextExtractor
 
 
 class FakeTextDetector:
@@ -42,11 +42,11 @@ class FakeBlock:
         return np.ones((textheight, textheight // 2, 3), dtype=np.uint8) * 255
 
 
-class TestMangaPageOcr(unittest.TestCase):
-    @patch("src.furikanji.manga_page_ocr.imread")
+class TestPageTextExtractor(unittest.TestCase):
+    @patch("src.furikanji.page_text_extractor.imread")
     def test_disable_ocr_returns_empty_blocks_with_image_size(self, mock_imread):
         mock_imread.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
-        ocr = MangaPageOcr(disable_ocr=True)
+        ocr = PageTextExtractor(disable_ocr=True)
 
         result = ocr("dummy.png")
 
@@ -54,13 +54,13 @@ class TestMangaPageOcr(unittest.TestCase):
         self.assertEqual(result["img_height"], 10)
         self.assertEqual(result["blocks"], [])
 
-    @patch("src.furikanji.manga_page_ocr.imread")
+    @patch("src.furikanji.page_text_extractor.imread")
     def test_uses_injected_adapters_to_build_output(self, mock_imread):
         mock_imread.return_value = np.zeros((30, 40, 3), dtype=np.uint8)
         fake_block = FakeBlock(vertical=False, font_size=24)
         detector = FakeTextDetector([fake_block])
         recognizer = FakeTextRecognizer("こんにちは")
-        ocr = MangaPageOcr(
+        ocr = PageTextExtractor(
             disable_ocr=False,
             text_localizer=detector,
             text_transcriber=recognizer,

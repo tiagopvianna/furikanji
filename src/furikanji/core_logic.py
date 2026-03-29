@@ -3,7 +3,9 @@ from json import JSONDecodeError
 from loguru import logger
 from tqdm import tqdm
 
-from src.furikanji.manga_page_ocr import MangaPageOcr
+from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
+from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
+from src.furikanji.page_text_extractor import PageTextExtractor
 from src.furikanji.utils import dump_json, load_json
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
@@ -132,11 +134,24 @@ class CoreLogic:
 
     def init_models(self):
         if self.mpocr is None:
-            self.mpocr = MangaPageOcr(
-                self.pretrained_model_name_or_path,
-                force_cpu=self.force_cpu,
+            extractor_kwargs = dict(self.kwargs)
+            detector_input_size = extractor_kwargs.pop("detector_input_size", 1024)
+            text_localizer = None
+            text_transcriber = None
+            if not self.disable_ocr:
+                text_localizer = ComicTextDetectorLocalizer(
+                    input_size=detector_input_size,
+                    force_cpu=self.force_cpu,
+                )
+                text_transcriber = MangaOcrTextTranscriber(
+                    pretrained_model_name_or_path=self.pretrained_model_name_or_path,
+                    force_cpu=self.force_cpu,
+                )
+            self.mpocr = PageTextExtractor(
+                text_localizer=text_localizer,
+                text_transcriber=text_transcriber,
                 disable_ocr=self.disable_ocr,
-                **self.kwargs,
+                **extractor_kwargs,
             )
 
     def process_volume(self, path: str, ignore_errors=False, no_cache=False):

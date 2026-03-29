@@ -4,9 +4,7 @@ from PIL import Image
 from loguru import logger
 from scipy.signal.windows import gaussian
 
-from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
 from src.furikanji.adapters.interfaces import TextLocalizerAdapter, TextTranscriberAdapter
-from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
 from src.furikanji.utils import imread
 
 
@@ -15,12 +13,9 @@ class InvalidImage(Exception):
         super().__init__(message)
 
 
-class MangaPageOcr:
+class PageTextExtractor:
     def __init__(
         self,
-        pretrained_model_name_or_path="kha-white/manga-ocr-base",
-        force_cpu=False,
-        detector_input_size=1024,
         text_height=64,
         max_ratio_vert=16,
         max_ratio_hor=8,
@@ -36,10 +31,8 @@ class MangaPageOcr:
         self.disable_ocr = disable_ocr
 
         if not self.disable_ocr:
-            if text_localizer is None:
-                text_localizer = ComicTextDetectorLocalizer(input_size=detector_input_size, force_cpu=force_cpu)
-            if text_transcriber is None:
-                text_transcriber = MangaOcrTextTranscriber(pretrained_model_name_or_path, force_cpu)
+            if text_localizer is None or text_transcriber is None:
+                raise ValueError("text_localizer and text_transcriber are required when OCR is enabled")
             self.text_localizer = text_localizer
             self.text_transcriber = text_transcriber
 
