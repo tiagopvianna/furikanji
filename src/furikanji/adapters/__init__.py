@@ -1,4 +1,4 @@
-from src.furikanji.adapters.interfaces import (
+from src.furikanji.application.interfaces import (
     TextLocalizationResult,
     TextLocalizerAdapter,
     TextTranscriberAdapter,

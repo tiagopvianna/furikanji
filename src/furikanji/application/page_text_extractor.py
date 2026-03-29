@@ -4,7 +4,7 @@ from PIL import Image
 from loguru import logger
 from scipy.signal.windows import gaussian
 
-from src.furikanji.adapters.interfaces import TextLocalizerAdapter, TextTranscriberAdapter
+from src.furikanji.application.interfaces import TextLocalizerAdapter, TextTranscriberAdapter
 from src.furikanji.utils import imread
 
 

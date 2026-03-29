@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.furikanji.adapters.interfaces import TextLocalizationResult
-from src.furikanji.page_text_extractor import PageTextExtractor
+from src.furikanji.application.interfaces import TextLocalizationResult
+from src.furikanji.application.page_text_extractor import PageTextExtractor
 
 
 class FakeTextDetector:
@@ -43,7 +43,7 @@ class FakeBlock:
 
 
 class TestPageTextExtractor(unittest.TestCase):
-    @patch("src.furikanji.page_text_extractor.imread")
+    @patch("src.furikanji.application.page_text_extractor.imread")
     def test_disable_ocr_returns_empty_blocks_with_image_size(self, mock_imread):
         mock_imread.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
         ocr = PageTextExtractor(disable_ocr=True)
@@ -54,7 +54,7 @@ class TestPageTextExtractor(unittest.TestCase):
         self.assertEqual(result["img_height"], 10)
         self.assertEqual(result["blocks"], [])
 
-    @patch("src.furikanji.page_text_extractor.imread")
+    @patch("src.furikanji.application.page_text_extractor.imread")
     def test_uses_injected_adapters_to_build_output(self, mock_imread):
         mock_imread.return_value = np.zeros((30, 40, 3), dtype=np.uint8)
         fake_block = FakeBlock(vertical=False, font_size=24)

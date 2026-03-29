@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
 from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
-from src.furikanji.page_text_extractor import PageTextExtractor
+from src.furikanji.application.page_text_extractor import PageTextExtractor
 from src.furikanji.utils import dump_json, load_json
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path

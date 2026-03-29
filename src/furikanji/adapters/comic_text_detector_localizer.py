@@ -1,6 +1,6 @@
 import torch
 
-from src.furikanji.adapters.interfaces import TextLocalizationResult
+from src.furikanji.application.interfaces import TextLocalizationResult
 from src.furikanji.adapters.model_cache_adapter import ModelCacheAdapter
 
 
