@@ -4,11 +4,10 @@ from PIL import Image
 from loguru import logger
 from scipy.signal.windows import gaussian
 
-from comic_text_detector.inference import TextDetector
-from manga_ocr import MangaOcr
-from src.furikanji.cache import cache
+from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
+from src.furikanji.adapters.interfaces import TextLocalizerAdapter, TextTranscriberAdapter
+from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
 from src.furikanji.utils import imread
-import torch
 
 
 class InvalidImage(Exception):
@@ -27,6 +26,8 @@ class MangaPageOcr:
         max_ratio_hor=8,
         anchor_window=2,
         disable_ocr=False,
+        text_localizer: TextLocalizerAdapter = None,
+        text_transcriber: TextTranscriberAdapter = None,
     ):
         self.text_height = text_height
         self.max_ratio_vert = max_ratio_vert
@@ -35,13 +36,12 @@ class MangaPageOcr:
         self.disable_ocr = disable_ocr
 
         if not self.disable_ocr:
-            cuda = torch.cuda.is_available()
-            device = "cuda" if cuda and not force_cpu else "cpu"
-            logger.info(f"Initializing text detector, using device {device}")
-            self.text_detector = TextDetector(
-                model_path=cache.comic_text_detector, input_size=detector_input_size, device=device, act="leaky"
-            )
-            self.mocr = MangaOcr(pretrained_model_name_or_path, force_cpu)
+            if text_localizer is None:
+                text_localizer = ComicTextDetectorLocalizer(input_size=detector_input_size, force_cpu=force_cpu)
+            if text_transcriber is None:
+                text_transcriber = MangaOcrTextTranscriber(pretrained_model_name_or_path, force_cpu)
+            self.text_localizer = text_localizer
+            self.text_transcriber = text_transcriber
 
     def __call__(self, img_path):
         img = imread(img_path)
@@ -53,7 +53,10 @@ class MangaPageOcr:
         if self.disable_ocr:
             return result
 
-        mask, mask_refined, blk_list = self.text_detector(img, refine_mode=1, keep_undetected_mask=True)
+        logger.info("Running text detection")
+        localization = self.text_localizer.localize_text(img)
+        mask_refined = localization.refined_mask
+        blk_list = localization.text_blocks
         for blk_idx, blk in enumerate(blk_list):
             result_blk = {
                 "box": list(blk.xyxy),
@@ -83,7 +86,7 @@ class MangaPageOcr:
                 for line_crop in line_crops:
                     if blk.vertical:
                         line_crop = cv2.rotate(line_crop, cv2.ROTATE_90_CLOCKWISE)
-                    line_text += self.mocr(Image.fromarray(line_crop))
+                    line_text += self.text_transcriber.transcribe_text(Image.fromarray(line_crop))
 
                 result_blk["lines_coords"].append(line.tolist())
                 result_blk["lines"].append(line_text)
