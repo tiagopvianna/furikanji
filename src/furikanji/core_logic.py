@@ -1,12 +1,9 @@
-from json import JSONDecodeError
-
 from loguru import logger
-from tqdm import tqdm
 
 from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
 from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
 from src.furikanji.application.page_text_extractor import PageTextExtractor
-from src.furikanji.utils import dump_json, load_json
+from src.furikanji.utils import dump_json
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
@@ -43,7 +40,7 @@ class CoreLogic:
         vertical_counter = 0
         logger.debug(result)
 
-        for block_index, block in enumerate(result.get("blocks", [])):
+        for block in result.get("blocks", []):
             vertical = bool(block.get("vertical", False))
             lines = block.get("lines", [])
             lines_coords = block.get("lines_coords", [])
@@ -77,11 +74,6 @@ class CoreLogic:
                     x_min_shifted = x_min + dx
                     x_max_shifted = x_max + dx
                     column_width = x_max - x_min
-                    # Check if any word in the line has Kanji to adjust horizontal spacing
-                    has_kanji_line = any(kanji_regex.search(word.surface) and (jaconv.kata2hira(getattr(word.feature, "kana", "")) != word.surface) for word in tagger(line_text))
-                    # extra_x = furigana_size
-                    extra_x = 0
-                    logger.debug(f"has_kanji_line: {has_kanji_line}")
                     y_cursor = y_min
                     for word in tagger(line_text):
                         surface = word.surface
@@ -156,7 +148,7 @@ class CoreLogic:
                 **extractor_kwargs,
             )
 
-    def process_volume(self, path: str, ignore_errors=False, no_cache=False):
+    def process_volume(self, path: str):
         self.init_models()
         result = self.mpocr(path)
         dump_json(result, "result.json")
