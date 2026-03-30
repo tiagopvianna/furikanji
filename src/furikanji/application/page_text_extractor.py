@@ -27,17 +27,17 @@ SplitPoints = List[int]
 
 
 class OutputBlock(TypedDict):
-    box: List[int]
-    vertical: bool
-    font_size: int
-    lines_coords: List[list]
-    lines: List[str]
+    bounding_box: List[int]
+    is_vertical: bool
+    estimated_font_size: int
+    line_outline_points: List[list]
+    line_texts: List[str]
 
 
 class PageExtractionResultDict(TypedDict):
-    img_width: int
-    img_height: int
-    blocks: List[OutputBlock]
+    image_width: int
+    image_height: int
+    text_regions: List[OutputBlock]
 
 
 @dataclass(frozen=True)
@@ -83,13 +83,17 @@ class PageTextExtractor:
         if image is None:
             raise InvalidImage()
         height, width, *_ = image.shape
-        result: PageExtractionResultDict = {"img_width": width, "img_height": height, "blocks": []}
+        result: PageExtractionResultDict = {
+            "image_width": width,
+            "image_height": height,
+            "text_regions": [],
+        }
         if self.disable_ocr:
             return result
 
         logger.info("Running text detection")
         localization = self.text_localizer.localize_text(image)
-        result["blocks"] = self._transcribe_localized_regions(
+        result["text_regions"] = self._transcribe_localized_regions(
             localization.localized_text_regions
         )
 
@@ -104,11 +108,11 @@ class PageTextExtractor:
     def _build_region_result(self, region: LocalizedTextRegion) -> OutputBlock:
         """Serialize one localized region and transcribe its lines."""
         result_block = {
-            "box": list(region.bounding_box),
-            "vertical": region.is_vertical,
-            "font_size": region.estimated_font_size,
-            "lines_coords": [],
-            "lines": [],
+            "bounding_box": list(region.bounding_box),
+            "is_vertical": region.is_vertical,
+            "estimated_font_size": region.estimated_font_size,
+            "line_outline_points": [],
+            "line_texts": [],
         }
 
         for line in region.lines:
@@ -117,8 +121,8 @@ class PageTextExtractor:
                 line_text_mask=line.line_text_mask,
                 is_vertical=region.is_vertical,
             )
-            result_block["lines_coords"].append(line.line_outline)
-            result_block["lines"].append(line_text)
+            result_block["line_outline_points"].append(line.line_outline)
+            result_block["line_texts"].append(line_text)
 
         return result_block
 

@@ -42,7 +42,7 @@ class TestPageTextExtractor(unittest.TestCase):
             PageTextExtractor()
 
     @patch("src.furikanji.application.page_text_extractor.imread")
-    def test_disable_ocr_returns_empty_blocks_with_image_size(self, mock_imread):
+    def test_disable_ocr_returns_empty_text_regions_with_image_size(self, mock_imread):
         mock_imread.return_value = np.zeros((10, 20, 3), dtype=np.uint8)
         ocr = PageTextExtractor(
             text_localizer=FakeTextDetector([]),
@@ -52,9 +52,9 @@ class TestPageTextExtractor(unittest.TestCase):
 
         result = ocr("dummy.png")
 
-        self.assertEqual(result["img_width"], 20)
-        self.assertEqual(result["img_height"], 10)
-        self.assertEqual(result["blocks"], [])
+        self.assertEqual(result["image_width"], 20)
+        self.assertEqual(result["image_height"], 10)
+        self.assertEqual(result["text_regions"], [])
 
     @patch("src.furikanji.application.page_text_extractor.imread")
     def test_uses_injected_adapters_to_build_output(self, mock_imread):
@@ -80,10 +80,10 @@ class TestPageTextExtractor(unittest.TestCase):
 
         result = ocr("dummy.png")
 
-        self.assertEqual(result["img_width"], 40)
-        self.assertEqual(result["img_height"], 30)
-        self.assertEqual(len(result["blocks"]), 1)
-        self.assertEqual(result["blocks"][0]["lines"], ["こんにちは"])
+        self.assertEqual(result["image_width"], 40)
+        self.assertEqual(result["image_height"], 30)
+        self.assertEqual(len(result["text_regions"]), 1)
+        self.assertEqual(result["text_regions"][0]["line_texts"], ["こんにちは"])
         self.assertEqual(recognizer.calls, 1)
 
     def test_split_line_image_for_transcription_does_not_split_small_ratio(self):
