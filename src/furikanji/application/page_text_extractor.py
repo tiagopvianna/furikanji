@@ -12,12 +12,16 @@ from src.furikanji.application.interfaces import (
     TextLocalizerAdapter,
     TextTranscriberAdapter,
 )
-from src.furikanji.utils import imread
 
 
 class InvalidImage(Exception):
     def __init__(self, message="Animation file, Corrupted file or Unsupported type"):
         super().__init__(message)
+
+
+def imread(path, flags=cv2.IMREAD_COLOR):
+    """cv2.imread, but works with unicode paths."""
+    return cv2.imdecode(np.fromfile(path, dtype=np.uint8), flags)
 
 
 LineImage = np.ndarray
@@ -26,7 +30,7 @@ LineCrops = List[np.ndarray]
 SplitPoints = List[int]
 
 
-class OutputBlock(TypedDict):
+class ExtractedTextRegionDict(TypedDict):
     bounding_box: List[int]
     is_vertical: bool
     estimated_font_size: int
@@ -34,10 +38,10 @@ class OutputBlock(TypedDict):
     line_texts: List[str]
 
 
-class PageExtractionResultDict(TypedDict):
+class PageTextExtractionResultDict(TypedDict):
     image_width: int
     image_height: int
-    text_regions: List[OutputBlock]
+    text_regions: List[ExtractedTextRegionDict]
 
 
 @dataclass(frozen=True)
@@ -77,13 +81,13 @@ class PageTextExtractor:
         self.text_localizer = text_localizer
         self.text_transcriber = text_transcriber
 
-    def __call__(self, img_path: str) -> PageExtractionResultDict:
+    def __call__(self, img_path: str) -> PageTextExtractionResultDict:
         """Run localization/transcription and return the current result schema."""
         image = imread(img_path)
         if image is None:
             raise InvalidImage()
         height, width, *_ = image.shape
-        result: PageExtractionResultDict = {
+        result: PageTextExtractionResultDict = {
             "image_width": width,
             "image_height": height,
             "text_regions": [],
@@ -101,11 +105,11 @@ class PageTextExtractor:
 
     def _transcribe_localized_regions(
         self, localized_text_regions: List[LocalizedTextRegion]
-    ) -> List[OutputBlock]:
+    ) -> List[ExtractedTextRegionDict]:
         """Serialize and transcribe all localized regions."""
         return [self._build_region_result(region) for region in localized_text_regions]
 
-    def _build_region_result(self, region: LocalizedTextRegion) -> OutputBlock:
+    def _build_region_result(self, region: LocalizedTextRegion) -> ExtractedTextRegionDict:
         """Serialize one localized region and transcribe its lines."""
         result_block = {
             "bounding_box": list(region.bounding_box),

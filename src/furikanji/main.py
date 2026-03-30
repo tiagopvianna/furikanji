@@ -1,21 +1,73 @@
 import fire
+import numpy as np
 
-from src.furikanji.core_logic import CoreLogic
+from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
+from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
+from src.furikanji.application.furigana_renderer import FuriganaRenderer
+from src.furikanji.application.interfaces import TextLocalizationResult
+from src.furikanji.application.page_text_extractor import PageTextExtractor
+from src.furikanji.application.process_image_use_case import ProcessImageUseCase
+
+
+class _NoopTextLocalizer:
+    def localize_text(self, image: np.ndarray) -> TextLocalizationResult:
+        height, width = image.shape[:2]
+        return TextLocalizationResult(
+            text_mask=np.zeros((height, width), dtype=np.uint8),
+            localized_text_regions=[],
+        )
+
+
+class _NoopTextTranscriber:
+    def transcribe_text(self, image_crop) -> str:
+        return ""
 
 
 def process_single_image(
     image_path: str,
     output_path: str = "output.png",
+    json_output_path: str = "result.json",
     device: str = "cpu",
     force_cpu: bool = False,
+    pretrained_model_name_or_path: str = "kha-white/manga-ocr-base",
+    disable_ocr: bool = False,
+    **extractor_kwargs,
 ):
-    if force_cpu:
-        device = "cpu"
+    normalized_device = device.lower()
+    if normalized_device not in {"cpu", "cuda"}:
+        raise ValueError("device must be one of: cpu, cuda")
+    effective_force_cpu = force_cpu or normalized_device == "cpu"
 
-    mg = CoreLogic()
+    detector_input_size = extractor_kwargs.pop("detector_input_size", 1024)
+    text_height = extractor_kwargs.get("text_height", 64)
 
-    print(image_path)
-    mg.process_volume(image_path)
+    if disable_ocr:
+        text_localizer = _NoopTextLocalizer()
+        text_transcriber = _NoopTextTranscriber()
+    else:
+        text_localizer = ComicTextDetectorLocalizer(
+            input_size=detector_input_size,
+            text_height=text_height,
+            force_cpu=effective_force_cpu,
+        )
+        text_transcriber = MangaOcrTextTranscriber(
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            force_cpu=effective_force_cpu,
+        )
+
+    page_text_extractor = PageTextExtractor(
+        text_localizer=text_localizer,
+        text_transcriber=text_transcriber,
+        disable_ocr=disable_ocr,
+        **extractor_kwargs,
+    )
+    furigana_renderer = FuriganaRenderer()
+    process_image_use_case = ProcessImageUseCase(page_text_extractor, furigana_renderer)
+    process_image_use_case(
+        image_path=image_path,
+        json_output_path=json_output_path,
+        overlay_output_path=output_path,
+    )
 
 
 if __name__ == "__main__":
