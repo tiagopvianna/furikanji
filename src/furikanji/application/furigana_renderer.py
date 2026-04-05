@@ -1,5 +1,5 @@
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 from loguru import logger
@@ -54,23 +54,52 @@ LineOutline = list[list[float]]
 LineOutlineList = list[LineOutline]
 
 
-class FuriganaRenderer:
-    ERASE_STRATEGY_PLANNED_TEXT = "planned_text"
-    ERASE_STRATEGY_DETECTED_REGION = "detected_region"
-    ERASE_STRATEGY = ERASE_STRATEGY_PLANNED_TEXT
-    REGION_ERASE_PADDING = 10
-    PLANNED_TEXT_ERASE_PADDING = 4
-    VERTICAL_PLANNING_FURIGANA_SIZE = 6
-    REGION_FURIGANA_FONT_SIZE = 8
-    MAIN_FONT_SIZE_OFFSET = 14
-    VERTICAL_MAIN_TEXT_X_OFFSET = 10
-    VERTICAL_FURIGANA_X_OFFSET = 10
-    VERTICAL_CHAR_SPACING = 6
-    VERTICAL_FURIGANA_SPACING = 2
-    HORIZONTAL_FURIGANA_GAP = 2
+@dataclass(frozen=True)
+class EraseConfig:
+    strategy: str = "planned_text"
+    region_padding: int = 10
+    planned_text_padding: int = 4
 
-    def __init__(self, furigana_reading_generator: FuriganaReadingGenerator) -> None:
+
+@dataclass(frozen=True)
+class TypographyConfig:
+    main_font_size_offset: int = 14
+    furigana_font_size: int = 8
+
+
+@dataclass(frozen=True)
+class VerticalLayoutConfig:
+    planning_furigana_size: int = 6
+    main_text_x_offset: int = 10
+    furigana_x_offset: int = 10
+    char_spacing: int = 6
+    furigana_spacing: int = 2
+    required_space_padding: int = 2
+    collision_x_threshold: int = 12
+    collision_y_overlap_min: int = 1
+
+
+@dataclass(frozen=True)
+class HorizontalLayoutConfig:
+    furigana_gap: int = 2
+
+
+@dataclass(frozen=True)
+class FuriganaRenderConfig:
+    erase: EraseConfig = field(default_factory=EraseConfig)
+    typography: TypographyConfig = field(default_factory=TypographyConfig)
+    vertical: VerticalLayoutConfig = field(default_factory=VerticalLayoutConfig)
+    horizontal: HorizontalLayoutConfig = field(default_factory=HorizontalLayoutConfig)
+
+
+class FuriganaRenderer:
+    def __init__(
+        self,
+        furigana_reading_generator: FuriganaReadingGenerator,
+        config: FuriganaRenderConfig | None = None,
+    ) -> None:
         self.furigana_reading_generator = furigana_reading_generator
+        self.config = config or FuriganaRenderConfig()
 
     def _load_japanese_font(self, size: int) -> ImageFont.ImageFont:
         font_path = Path(__file__).parent.parent / "fonts" / "NotoSansCJKjp-Regular.otf"
@@ -88,7 +117,7 @@ class FuriganaRenderer:
         context = self._initialize_rendering_context(image_path=image_path)
         offsets = self._plan_vertical_layout_shifts(
             result=result,
-            furigana_size=self.VERTICAL_PLANNING_FURIGANA_SIZE,
+            furigana_size=self.config.vertical.planning_furigana_size,
         )
         vertical_line_index = 0
         logger.debug(result)
@@ -143,9 +172,9 @@ class FuriganaRenderer:
     def _build_region_fonts(
         self, estimated_font_size: int
     ) -> tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
-        main_font_size = max(1, estimated_font_size - self.MAIN_FONT_SIZE_OFFSET)
+        main_font_size = max(1, estimated_font_size - self.config.typography.main_font_size_offset)
         main_font = self._load_japanese_font(main_font_size)
-        furigana_font = self._load_japanese_font(self.REGION_FURIGANA_FONT_SIZE)
+        furigana_font = self._load_japanese_font(self.config.typography.furigana_font_size)
         return main_font, furigana_font
 
     def _erase_background_for_region(
@@ -154,15 +183,17 @@ class FuriganaRenderer:
         line_outline_points: LineOutlineList,
         planned_bounds: Bounds | None,
     ) -> None:
-        if self.ERASE_STRATEGY == self.ERASE_STRATEGY_PLANNED_TEXT:
+        if self.config.erase.strategy == "planned_text":
             self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
             return
-        if self.ERASE_STRATEGY == self.ERASE_STRATEGY_DETECTED_REGION:
+        if self.config.erase.strategy == "detected_region":
             self._erase_detected_region_background(
                 draw=draw, line_outline_points=line_outline_points
             )
             return
-        logger.warning(f"Unknown erase strategy '{self.ERASE_STRATEGY}', using planned_text")
+        logger.warning(
+            f"Unknown erase strategy '{self.config.erase.strategy}', using planned_text"
+        )
         self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
 
     def _erase_detected_region_background(
@@ -178,12 +209,12 @@ class FuriganaRenderer:
         draw.rectangle(
             [
                 (
-                    min(all_xs) - self.REGION_ERASE_PADDING,
-                    min(all_ys) - self.REGION_ERASE_PADDING,
+                    min(all_xs) - self.config.erase.region_padding,
+                    min(all_ys) - self.config.erase.region_padding,
                 ),
                 (
-                    max(all_xs) + self.REGION_ERASE_PADDING,
-                    max(all_ys) + self.REGION_ERASE_PADDING,
+                    max(all_xs) + self.config.erase.region_padding,
+                    max(all_ys) + self.config.erase.region_padding,
                 ),
             ],
             fill=(255, 255, 255),
@@ -200,12 +231,12 @@ class FuriganaRenderer:
         draw.rectangle(
             [
                 (
-                    x0 - self.PLANNED_TEXT_ERASE_PADDING,
-                    y0 - self.PLANNED_TEXT_ERASE_PADDING,
+                    x0 - self.config.erase.planned_text_padding,
+                    y0 - self.config.erase.planned_text_padding,
                 ),
                 (
-                    x1 + self.PLANNED_TEXT_ERASE_PADDING,
-                    y1 + self.PLANNED_TEXT_ERASE_PADDING,
+                    x1 + self.config.erase.planned_text_padding,
+                    y1 + self.config.erase.planned_text_padding,
                 ),
             ],
             fill=(255, 255, 255),
@@ -308,13 +339,13 @@ class FuriganaRenderer:
                 command, command_bounds = self._build_draw_command(
                     draw=draw,
                     text=char,
-                    x=x_pos - self.VERTICAL_MAIN_TEXT_X_OFFSET,
+                    x=x_pos - self.config.vertical.main_text_x_offset,
                     y=y_cursor,
                     font=font,
                 )
                 draw_commands.append(command)
                 planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
-                y_cursor += h_char + self.VERTICAL_CHAR_SPACING
+                y_cursor += h_char + self.config.vertical.char_spacing
 
             if segment.needs_furigana:
                 y_furi = y_segment_start
@@ -324,13 +355,13 @@ class FuriganaRenderer:
                     command, command_bounds = self._build_draw_command(
                         draw=draw,
                         text=kana_char,
-                        x=x_max_shifted - self.VERTICAL_FURIGANA_X_OFFSET,
+                        x=x_max_shifted - self.config.vertical.furigana_x_offset,
                         y=y_furi,
                         font=furigana_font,
                     )
                     draw_commands.append(command)
                     planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
-                    y_furi += h_f + self.VERTICAL_FURIGANA_SPACING
+                    y_furi += h_f + self.config.vertical.furigana_spacing
         return draw_commands, planned_bounds
 
     def _plan_horizontal_line_layout(
@@ -352,7 +383,7 @@ class FuriganaRenderer:
                 w_ruby = bbox_ruby[2] - bbox_ruby[0]
                 h_ruby = bbox_ruby[3] - bbox_ruby[1]
                 ruby_x = x_cursor + (w_word - w_ruby) / 2
-                ruby_y = bounds.y_min - h_ruby - self.HORIZONTAL_FURIGANA_GAP
+                ruby_y = bounds.y_min - h_ruby - self.config.horizontal.furigana_gap
                 command, command_bounds = self._build_draw_command(
                     draw=draw,
                     text=segment.reading,
@@ -420,7 +451,11 @@ class FuriganaRenderer:
                 has_furigana_segments = any(
                     segment.needs_furigana for segment in segments
                 )
-                required_space = furigana_size + 2 if has_furigana_segments else 0
+                required_space = (
+                    furigana_size + self.config.vertical.required_space_padding
+                    if has_furigana_segments
+                    else 0
+                )
                 lines_info.append(
                     VerticalLineLayoutNeed(
                         index=counter,
@@ -438,9 +473,17 @@ class FuriganaRenderer:
     def _cluster_colliding_vertical_columns(
         self,
         lines_info: list[VerticalLineLayoutNeed],
-        x_thresh: int = 12,
-        y_overlap_min: int = 1,
+        x_thresh: int | None = None,
+        y_overlap_min: int | None = None,
     ) -> list[list[VerticalLineLayoutNeed]]:
+        x_thresh = (
+            self.config.vertical.collision_x_threshold if x_thresh is None else x_thresh
+        )
+        y_overlap_min = (
+            self.config.vertical.collision_y_overlap_min
+            if y_overlap_min is None
+            else y_overlap_min
+        )
         groups: list[list[VerticalLineLayoutNeed]] = []
 
         def overlaps(a: VerticalLineLayoutNeed, b: VerticalLineLayoutNeed) -> bool:
