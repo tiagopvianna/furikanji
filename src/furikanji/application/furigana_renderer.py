@@ -72,7 +72,7 @@ LineOutlineList = list[LineOutline]
 
 @dataclass(frozen=True)
 class EraseConfig:
-    strategy: str = "planned_text"
+    strategy: str = "both"
     region_padding: int = 10
     planned_text_padding: int = 4
 
@@ -109,8 +109,8 @@ class SizingConfig:
     ocr_fallback_main_scale: float = 0.45
     min_char_spacing: int = 1
     min_furigana_spacing: int = 1
-    target_inner_ratio_vertical: float = 0.88
-    target_inner_ratio_horizontal: float = 0.9
+    target_inner_ratio_vertical: float = 1.0
+    target_inner_ratio_horizontal: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -122,11 +122,19 @@ class ResolvedRegionSizing:
 
 
 @dataclass(frozen=True)
+class PlacementConfig:
+    policy: str = "overflow_aware"
+    overflow_aware_anchor: str = "center"
+    min_margin: int = 0
+
+
+@dataclass(frozen=True)
 class FuriganaRenderConfig:
     erase: EraseConfig = field(default_factory=EraseConfig)
     vertical: VerticalLayoutConfig = field(default_factory=VerticalLayoutConfig)
     horizontal: HorizontalLayoutConfig = field(default_factory=HorizontalLayoutConfig)
     sizing: SizingConfig = field(default_factory=SizingConfig)
+    placement: PlacementConfig = field(default_factory=PlacementConfig)
     draw_target_boxes: bool = False
     target_box_color: tuple[int, int, int] = (0, 255, 0)
     target_box_width: int = 2
@@ -318,6 +326,16 @@ class FuriganaRenderer:
                 vertical,
                 len(line_texts),
             )
+        if region_detected_bounds is not None:
+            region_origin = (region_detected_bounds[0], region_detected_bounds[1])
+            intrinsic_line_outline_points = self._translate_line_outline_points(
+                line_outline_points=line_outline_points,
+                dx=-region_origin[0],
+                dy=-region_origin[1],
+            )
+        else:
+            region_origin = (0.0, 0.0)
+            intrinsic_line_outline_points = line_outline_points
         font, furigana_font = self._build_region_fonts(region_sizing=region_sizing)
         logger.debug(
             "Region {} font plan: estimated_font_size={}, main_font_size={}, furigana_font_size={}, char_spacing={}, furigana_spacing={}",
@@ -328,17 +346,26 @@ class FuriganaRenderer:
             region_sizing.char_spacing,
             region_sizing.furigana_spacing,
         )
-        draw_commands, planned_bounds, vertical_line_index = (
+        intrinsic_draw_commands, intrinsic_bounds, vertical_line_index = (
             self._plan_region_text_layout(
                 draw=measure_draw,
                 vertical=vertical,
                 line_texts=line_texts,
-                line_outline_points=line_outline_points,
+                line_outline_points=intrinsic_line_outline_points,
                 font=font,
                 furigana_font=furigana_font,
                 offsets=offsets,
                 vertical_line_index=vertical_line_index,
                 region_sizing=region_sizing,
+            )
+        )
+        draw_commands, planned_bounds, placement_dx, placement_dy, overflow_flags = (
+            self._place_region_intrinsic_layout(
+                draw_commands=intrinsic_draw_commands,
+                intrinsic_bounds=intrinsic_bounds,
+                region_origin=region_origin,
+                region_detected_bounds=region_detected_bounds,
+                image_size=image_size,
             )
         )
         planned_ratio_bounds = (
@@ -348,7 +375,7 @@ class FuriganaRenderer:
         )
         first_command = draw_commands[0] if draw_commands else None
         logger.debug(
-            "Region {} plan output: commands={}, first_command={}, planned_bounds_px={}, planned_bounds_ratio={}",
+            "Region {} plan output: commands={}, first_command={}, planned_bounds_px={}, planned_bounds_ratio={}, placement_dx={}, placement_dy={}, overflow_flags={}",
             region_index,
             len(draw_commands),
             (first_command.text, first_command.x, first_command.y)
@@ -356,6 +383,9 @@ class FuriganaRenderer:
             else None,
             planned_bounds,
             planned_ratio_bounds,
+            placement_dx,
+            placement_dy,
+            overflow_flags,
         )
         return (
             RegionRenderPlan(
@@ -365,6 +395,103 @@ class FuriganaRenderer:
             ),
             vertical_line_index,
         )
+
+    def _place_region_intrinsic_layout(
+        self,
+        draw_commands: list[DrawCommand],
+        intrinsic_bounds: Bounds | None,
+        region_origin: tuple[float, float],
+        region_detected_bounds: Bounds | None,
+        image_size: tuple[int, int],
+    ) -> tuple[list[DrawCommand], Bounds | None, float, float, dict[str, bool]]:
+        if intrinsic_bounds is None:
+            return draw_commands, None, 0.0, 0.0, {
+                "overflow_left": False,
+                "overflow_top": False,
+                "overflow_right": False,
+                "overflow_bottom": False,
+            }
+        target_bounds = (
+            region_detected_bounds
+            if region_detected_bounds is not None
+            else self._translate_bounds(
+                bounds=intrinsic_bounds,
+                dx=region_origin[0],
+                dy=region_origin[1],
+            )
+        )
+        if target_bounds is None:
+            return draw_commands, intrinsic_bounds, 0.0, 0.0, {
+                "overflow_left": False,
+                "overflow_top": False,
+                "overflow_right": False,
+                "overflow_bottom": False,
+            }
+
+        policy = self.config.placement.policy
+        if policy == "top_left":
+            base_dx, base_dy = self._compute_anchor_translation(
+                intrinsic_bounds=intrinsic_bounds,
+                target_bounds=target_bounds,
+                anchor="top_left",
+            )
+        elif policy == "center":
+            base_dx, base_dy = self._compute_anchor_translation(
+                intrinsic_bounds=intrinsic_bounds,
+                target_bounds=target_bounds,
+                anchor="center",
+            )
+        else:
+            base_dx, base_dy = self._compute_anchor_translation(
+                intrinsic_bounds=intrinsic_bounds,
+                target_bounds=target_bounds,
+                anchor=self.config.placement.overflow_aware_anchor,
+            )
+        placed_bounds = self._translate_bounds(
+            bounds=intrinsic_bounds, dx=base_dx, dy=base_dy
+        )
+        if placed_bounds is None:
+            return draw_commands, intrinsic_bounds, 0.0, 0.0, {
+                "overflow_left": False,
+                "overflow_top": False,
+                "overflow_right": False,
+                "overflow_bottom": False,
+            }
+
+        if policy == "overflow_aware":
+            shift_x, shift_y = self._compute_overflow_correction_shift(
+                bounds=placed_bounds,
+                image_size=image_size,
+                margin=self.config.placement.min_margin,
+            )
+        else:
+            shift_x, shift_y = (0.0, 0.0)
+
+        dx = base_dx + shift_x
+        dy = base_dy + shift_y
+        final_bounds = self._translate_bounds(bounds=intrinsic_bounds, dx=dx, dy=dy)
+        translated_commands = self._translate_draw_commands(
+            draw_commands=draw_commands, dx=dx, dy=dy
+        )
+        overflow_flags = self._compute_overflow_flags(
+            bounds=final_bounds,
+            image_size=image_size,
+            margin=self.config.placement.min_margin,
+        )
+        logger.debug(
+            "Region placement: policy={}, anchor={}, target_bounds={}, intrinsic_bounds={}, base_shift=({}, {}), overflow_correction=({}, {}), final_bounds={}, overflow_flags={}",
+            policy,
+            self.config.placement.overflow_aware_anchor,
+            target_bounds,
+            intrinsic_bounds,
+            base_dx,
+            base_dy,
+            shift_x,
+            shift_y,
+            final_bounds,
+            overflow_flags,
+        )
+        return translated_commands, final_bounds, dx, dy, overflow_flags
 
     def _build_region_fonts(
         self, region_sizing: ResolvedRegionSizing
@@ -379,6 +506,14 @@ class FuriganaRenderer:
         line_outline_points: LineOutlineList,
         planned_bounds: Bounds | None,
     ) -> None:
+        if self.config.erase.strategy == "both":
+            self._erase_detected_region_background(
+                draw=draw, line_outline_points=line_outline_points
+            )
+            self._erase_planned_text_background(
+                draw=draw, planned_bounds=planned_bounds
+            )
+            return
         if self.config.erase.strategy == "planned_text":
             self._erase_planned_text_background(
                 draw=draw, planned_bounds=planned_bounds
@@ -705,6 +840,97 @@ class FuriganaRenderer:
             max(bounds_a[2], bounds_b[2]),
             max(bounds_a[3], bounds_b[3]),
         )
+
+    def _translate_line_outline_points(
+        self, line_outline_points: LineOutlineList, dx: float, dy: float
+    ) -> LineOutlineList:
+        translated_lines: LineOutlineList = []
+        for line in line_outline_points:
+            translated_lines.append([[pt[0] + dx, pt[1] + dy] for pt in line])
+        return translated_lines
+
+    def _translate_draw_commands(
+        self, draw_commands: list[DrawCommand], dx: float, dy: float
+    ) -> list[DrawCommand]:
+        return [
+            DrawCommand(
+                text=command.text,
+                x=command.x + dx,
+                y=command.y + dy,
+                font=command.font,
+            )
+            for command in draw_commands
+        ]
+
+    def _translate_bounds(
+        self, bounds: Bounds | None, dx: float, dy: float
+    ) -> Bounds | None:
+        if bounds is None:
+            return None
+        return (bounds[0] + dx, bounds[1] + dy, bounds[2] + dx, bounds[3] + dy)
+
+    def _compute_anchor_translation(
+        self, intrinsic_bounds: Bounds, target_bounds: Bounds, anchor: str
+    ) -> tuple[float, float]:
+        if anchor == "top_left":
+            return (
+                target_bounds[0] - intrinsic_bounds[0],
+                target_bounds[1] - intrinsic_bounds[1],
+            )
+        intrinsic_center_x = (intrinsic_bounds[0] + intrinsic_bounds[2]) / 2
+        intrinsic_center_y = (intrinsic_bounds[1] + intrinsic_bounds[3]) / 2
+        target_center_x = (target_bounds[0] + target_bounds[2]) / 2
+        target_center_y = (target_bounds[1] + target_bounds[3]) / 2
+        return (
+            target_center_x - intrinsic_center_x,
+            target_center_y - intrinsic_center_y,
+        )
+
+    def _compute_overflow_correction_shift(
+        self, bounds: Bounds, image_size: tuple[int, int], margin: int
+    ) -> tuple[float, float]:
+        x0, y0, x1, y1 = bounds
+        image_width, image_height = image_size
+        allowed_x0 = float(margin)
+        allowed_y0 = float(margin)
+        allowed_x1 = float(max(margin, image_width - margin))
+        allowed_y1 = float(max(margin, image_height - margin))
+        width = x1 - x0
+        height = y1 - y0
+        allowed_width = max(0.0, allowed_x1 - allowed_x0)
+        allowed_height = max(0.0, allowed_y1 - allowed_y0)
+
+        if width > allowed_width:
+            corrected_x0 = allowed_x0
+        else:
+            corrected_x0 = min(max(x0, allowed_x0), allowed_x1 - width)
+        if height > allowed_height:
+            corrected_y0 = allowed_y0
+        else:
+            corrected_y0 = min(max(y0, allowed_y0), allowed_y1 - height)
+        return corrected_x0 - x0, corrected_y0 - y0
+
+    def _compute_overflow_flags(
+        self, bounds: Bounds | None, image_size: tuple[int, int], margin: int
+    ) -> dict[str, bool]:
+        if bounds is None:
+            return {
+                "overflow_left": False,
+                "overflow_top": False,
+                "overflow_right": False,
+                "overflow_bottom": False,
+            }
+        image_width, image_height = image_size
+        allowed_x0 = float(margin)
+        allowed_y0 = float(margin)
+        allowed_x1 = float(max(margin, image_width - margin))
+        allowed_y1 = float(max(margin, image_height - margin))
+        return {
+            "overflow_left": bounds[0] < allowed_x0,
+            "overflow_top": bounds[1] < allowed_y0,
+            "overflow_right": bounds[2] > allowed_x1,
+            "overflow_bottom": bounds[3] > allowed_y1,
+        }
 
     def _describe_vertical_columns_furigana_space_needs(
         self,

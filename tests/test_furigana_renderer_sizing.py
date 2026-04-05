@@ -148,7 +148,7 @@ class TestFuriganaRendererSizing(unittest.TestCase):
 
         self.assertEqual(sizing.main_size, 18)
         _, kwargs = estimate_mock.call_args
-        self.assertEqual(kwargs["target_dimension"], 18.0)
+        self.assertEqual(kwargs["target_dimension"], 20.0)
         self.assertFalse(kwargs["vertical"])
 
 
