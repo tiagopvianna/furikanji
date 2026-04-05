@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import cv2
+import numpy as np
 import requests
 import torch
 from loguru import logger
@@ -76,11 +78,18 @@ class ComicTextDetectorLocalizer:
                     refined_mask, line_idx, self.text_height
                 )
                 line_outline_list = line_outline.tolist()
+                line_target_width, line_target_height = (
+                    self._compute_line_mask_inner_dimensions(
+                        refined_mask=refined_mask, line_outline=line_outline_list
+                    )
+                )
                 lines.append(
                     LocalizedTextLine(
                         line_outline=line_outline_list,
                         line_image=line_image,
                         line_text_mask=line_text_mask,
+                        line_target_width=line_target_width,
+                        line_target_height=line_target_height,
                     )
                 )
 
@@ -97,3 +106,33 @@ class ComicTextDetectorLocalizer:
             text_mask=refined_mask,
             localized_text_regions=localized_text_regions,
         )
+
+    def _compute_line_mask_inner_dimensions(
+        self, refined_mask: np.ndarray, line_outline: list[list[float]]
+    ) -> tuple[float | None, float | None]:
+        if not line_outline:
+            return None, None
+        polygon = np.array(line_outline, dtype=np.int32)
+        xs = polygon[:, 0]
+        ys = polygon[:, 1]
+        x_min = max(0, int(xs.min()))
+        y_min = max(0, int(ys.min()))
+        x_max = min(refined_mask.shape[1] - 1, int(xs.max()))
+        y_max = min(refined_mask.shape[0] - 1, int(ys.max()))
+        if x_max < x_min or y_max < y_min:
+            return None, None
+
+        mask_crop = refined_mask[y_min : y_max + 1, x_min : x_max + 1]
+        local_polygon = polygon.copy()
+        local_polygon[:, 0] -= x_min
+        local_polygon[:, 1] -= y_min
+        polygon_mask = np.zeros_like(mask_crop, dtype=np.uint8)
+        cv2.fillPoly(polygon_mask, [local_polygon], 255)
+        active = (mask_crop > 0) & (polygon_mask > 0)
+        if not np.any(active):
+            return None, None
+
+        active_ys, active_xs = np.where(active)
+        width = float(active_xs.max() - active_xs.min() + 1)
+        height = float(active_ys.max() - active_ys.min() + 1)
+        return width, height

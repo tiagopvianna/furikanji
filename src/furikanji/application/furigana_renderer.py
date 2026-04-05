@@ -109,6 +109,8 @@ class SizingConfig:
     ocr_fallback_main_scale: float = 0.45
     min_char_spacing: int = 1
     min_furigana_spacing: int = 1
+    target_inner_ratio_vertical: float = 0.88
+    target_inner_ratio_horizontal: float = 0.9
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,7 @@ class FuriganaRenderConfig:
     draw_target_boxes: bool = False
     target_box_color: tuple[int, int, int] = (0, 255, 0)
     target_box_width: int = 2
+    target_box_source: str = "selected"
     draw_overlay_text: bool = True
 
 
@@ -179,12 +182,48 @@ class FuriganaRenderer:
         self, draw: ImageDraw.ImageDraw, result: PageTextExtractionResultDict
     ) -> None:
         for text_region in result.get("text_regions", []):
-            for line_coords in text_region.get("line_outline_points", []):
+            vertical = bool(text_region.get("is_vertical", False))
+            line_target_widths = text_region.get("line_target_widths", [])
+            line_target_heights = text_region.get("line_target_heights", [])
+            for index, line_coords in enumerate(text_region.get("line_outline_points", [])):
                 bounds = self._compute_outline_bounds(line_coords)
                 if bounds is None:
                     continue
+                if self.config.target_box_source == "bbox":
+                    box_bounds = bounds
+                else:
+                    bbox_width = bounds[2] - bounds[0]
+                    bbox_height = bounds[3] - bounds[1]
+                    mask_target_dimension = (
+                        line_target_widths[index]
+                        if vertical
+                        else line_target_heights[index]
+                    ) if index < len(line_target_widths if vertical else line_target_heights) else None
+                    selected_target_dimension = (
+                        float(mask_target_dimension)
+                        if mask_target_dimension is not None and mask_target_dimension > 0
+                        else (bbox_width if vertical else bbox_height)
+                    )
+                    x_center = (bounds[0] + bounds[2]) / 2
+                    y_center = (bounds[1] + bounds[3]) / 2
+                    if vertical:
+                        half_w = selected_target_dimension / 2
+                        box_bounds = (
+                            x_center - half_w,
+                            bounds[1],
+                            x_center + half_w,
+                            bounds[3],
+                        )
+                    else:
+                        half_h = selected_target_dimension / 2
+                        box_bounds = (
+                            bounds[0],
+                            y_center - half_h,
+                            bounds[2],
+                            y_center + half_h,
+                        )
                 draw.rectangle(
-                    [bounds[0:2], bounds[2:4]],
+                    [box_bounds[0:2], box_bounds[2:4]],
                     outline=self.config.target_box_color,
                     width=self.config.target_box_width,
                 )
@@ -804,20 +843,44 @@ class FuriganaRenderer:
     ) -> ResolvedRegionSizing:
         vertical = bool(text_region.get("is_vertical", False))
         line_outline_points = text_region.get("line_outline_points", [])
+        line_target_widths = text_region.get("line_target_widths", [])
+        line_target_heights = text_region.get("line_target_heights", [])
         line_guesses: list[int] = []
 
-        for line_coords in line_outline_points:
+        for index, line_coords in enumerate(line_outline_points):
             line_bounds = self._compute_outline_bounds(line_coords)
             if line_bounds is None:
                 continue
-            target_dimension = (
+            bbox_target_dimension = (
                 line_bounds[2] - line_bounds[0]
                 if vertical
                 else line_bounds[3] - line_bounds[1]
             )
+            mask_target_dimension = (
+                line_target_widths[index]
+                if vertical
+                else line_target_heights[index]
+            ) if index < len(line_target_widths if vertical else line_target_heights) else None
+            target_dimension = (
+                float(mask_target_dimension)
+                if mask_target_dimension is not None and mask_target_dimension > 0
+                else bbox_target_dimension
+            )
+            logger.debug(
+                "Line target source: vertical={}, line_index={}, mask_target={}, bbox_target={}, selected_target={}",
+                vertical,
+                index,
+                mask_target_dimension,
+                bbox_target_dimension,
+                target_dimension,
+            )
+            effective_target_dimension = self._compute_effective_target_dimension(
+                target_dimension=target_dimension,
+                vertical=vertical,
+            )
             guess = self._estimate_main_size_from_target_dimension(
                 draw=measure_draw,
-                target_dimension=target_dimension,
+                target_dimension=effective_target_dimension,
                 vertical=vertical,
             )
             if guess is not None:
@@ -952,3 +1015,22 @@ class FuriganaRenderer:
 
     def _clamp_main_size(self, size: int) -> int:
         return max(self.config.sizing.min_main_size, min(self.config.sizing.max_main_size, size))
+
+    def _compute_effective_target_dimension(
+        self, target_dimension: float, vertical: bool
+    ) -> float:
+        ratio = (
+            self.config.sizing.target_inner_ratio_vertical
+            if vertical
+            else self.config.sizing.target_inner_ratio_horizontal
+        )
+        ratio = max(0.1, min(1.0, ratio))
+        effective = target_dimension * ratio
+        logger.debug(
+            "Sizing target adjustment: vertical={}, target_raw={}, target_inner_ratio={}, target_effective={}",
+            vertical,
+            target_dimension,
+            ratio,
+            effective,
+        )
+        return effective

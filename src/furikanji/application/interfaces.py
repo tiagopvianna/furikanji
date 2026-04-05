@@ -10,6 +10,8 @@ class LocalizedTextLine:
     line_outline: List[List[float]]
     line_image: np.ndarray
     line_text_mask: np.ndarray
+    line_target_width: float | None = None
+    line_target_height: float | None = None
 
 
 @dataclass(frozen=True)

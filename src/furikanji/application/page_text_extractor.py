@@ -35,6 +35,8 @@ class ExtractedTextRegionDict(TypedDict):
     is_vertical: bool
     estimated_font_size: int
     line_outline_points: List[list]
+    line_target_widths: List[float | None]
+    line_target_heights: List[float | None]
     line_texts: List[str]
 
 
@@ -116,6 +118,8 @@ class PageTextExtractor:
             "is_vertical": region.is_vertical,
             "estimated_font_size": region.estimated_font_size,
             "line_outline_points": [],
+            "line_target_widths": [],
+            "line_target_heights": [],
             "line_texts": [],
         }
 
@@ -126,6 +130,8 @@ class PageTextExtractor:
                 is_vertical=region.is_vertical,
             )
             result_block["line_outline_points"].append(line.line_outline)
+            result_block["line_target_widths"].append(line.line_target_width)
+            result_block["line_target_heights"].append(line.line_target_height)
             result_block["line_texts"].append(line_text)
 
         return result_block
