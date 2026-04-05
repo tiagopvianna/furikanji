@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from statistics import median
 from pathlib import Path
 from typing import Iterable
 
@@ -77,18 +78,9 @@ class EraseConfig:
 
 
 @dataclass(frozen=True)
-class TypographyConfig:
-    main_font_size_offset: int = 14
-    furigana_font_size: int = 8
-
-
-@dataclass(frozen=True)
 class VerticalLayoutConfig:
-    planning_furigana_size: int = 6
     main_text_x_offset: int = 10
     furigana_x_offset: int = 10
-    char_spacing: int = 6
-    furigana_spacing: int = 2
     required_space_padding: int = 2
     collision_x_threshold: int = 12
     collision_y_overlap_min: int = 1
@@ -100,11 +92,39 @@ class HorizontalLayoutConfig:
 
 
 @dataclass(frozen=True)
+class SizingConfig:
+    probe_glyph: str = "田"
+    min_main_size: int = 8
+    max_main_size: int = 120
+    main_scale_bias: float = 1.0
+    furigana_ratio: float = 0.5
+    min_furigana_size: int = 6
+    max_furigana_size: int = 72
+    char_spacing_ratio: float = 0.25
+    furigana_spacing_ratio: float = 0.2
+    enable_one_step_correction: bool = True
+    use_ocr_estimate_fallback: bool = True
+    min_target_dimension: float = 1.0
+    default_main_size: int = 24
+    ocr_fallback_main_scale: float = 0.45
+    min_char_spacing: int = 1
+    min_furigana_spacing: int = 1
+
+
+@dataclass(frozen=True)
+class ResolvedRegionSizing:
+    main_size: int
+    furigana_size: int
+    char_spacing: int
+    furigana_spacing: int
+
+
+@dataclass(frozen=True)
 class FuriganaRenderConfig:
     erase: EraseConfig = field(default_factory=EraseConfig)
-    typography: TypographyConfig = field(default_factory=TypographyConfig)
     vertical: VerticalLayoutConfig = field(default_factory=VerticalLayoutConfig)
     horizontal: HorizontalLayoutConfig = field(default_factory=HorizontalLayoutConfig)
+    sizing: SizingConfig = field(default_factory=SizingConfig)
 
 
 class FuriganaRenderer:
@@ -161,9 +181,12 @@ class FuriganaRenderer:
         measure_draw: ImageDraw.ImageDraw,
         image_size: tuple[int, int],
     ) -> PageRenderPlan:
+        resolved_region_sizings = self._resolve_region_sizings(
+            result=result, measure_draw=measure_draw
+        )
         offsets = self._plan_vertical_column_shifts_for_furigana(
             result=result,
-            furigana_size=self.config.vertical.planning_furigana_size,
+            region_sizings=resolved_region_sizings,
         )
         logger.debug("Vertical column shifts for furigana: {}", offsets)
         vertical_line_index = 0
@@ -176,6 +199,7 @@ class FuriganaRenderer:
                 vertical_line_index=vertical_line_index,
                 region_index=region_index,
                 image_size=image_size,
+                region_sizing=resolved_region_sizings[region_index],
             )
             region_plans.append(region_render_plan)
         return PageRenderPlan(region_plans=region_plans)
@@ -209,6 +233,7 @@ class FuriganaRenderer:
         vertical_line_index: int,
         region_index: int,
         image_size: tuple[int, int],
+        region_sizing: ResolvedRegionSizing,
     ) -> tuple[RegionRenderPlan, int]:
         vertical = bool(text_region.get("is_vertical", False))
         line_texts = text_region.get("line_texts", [])
@@ -233,15 +258,15 @@ class FuriganaRenderer:
                 vertical,
                 len(line_texts),
             )
-        font, furigana_font = self._build_region_fonts(
-            text_region.get("estimated_font_size", 24)
-        )
+        font, furigana_font = self._build_region_fonts(region_sizing=region_sizing)
         logger.debug(
-            "Region {} font plan: estimated_font_size={}, main_font_size={}, furigana_font_size={}",
+            "Region {} font plan: estimated_font_size={}, main_font_size={}, furigana_font_size={}, char_spacing={}, furigana_spacing={}",
             region_index,
             text_region.get("estimated_font_size", 24),
             self._debug_font_size(font),
             self._debug_font_size(furigana_font),
+            region_sizing.char_spacing,
+            region_sizing.furigana_spacing,
         )
         draw_commands, planned_bounds, vertical_line_index = (
             self._plan_region_text_layout(
@@ -253,6 +278,7 @@ class FuriganaRenderer:
                 furigana_font=furigana_font,
                 offsets=offsets,
                 vertical_line_index=vertical_line_index,
+                region_sizing=region_sizing,
             )
         )
         planned_ratio_bounds = (
@@ -281,15 +307,10 @@ class FuriganaRenderer:
         )
 
     def _build_region_fonts(
-        self, estimated_font_size: int
+        self, region_sizing: ResolvedRegionSizing
     ) -> tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
-        main_font_size = max(
-            1, estimated_font_size - self.config.typography.main_font_size_offset
-        )
-        main_font = self._load_japanese_font(main_font_size)
-        furigana_font = self._load_japanese_font(
-            self.config.typography.furigana_font_size
-        )
+        main_font = self._load_japanese_font(region_sizing.main_size)
+        furigana_font = self._load_japanese_font(region_sizing.furigana_size)
         return main_font, furigana_font
 
     def _erase_background_for_region(
@@ -382,6 +403,7 @@ class FuriganaRenderer:
         furigana_font: ImageFont.ImageFont,
         offsets: dict[int, float],
         vertical_line_index: int,
+        region_sizing: ResolvedRegionSizing,
     ) -> tuple[list[DrawCommand], Bounds | None, int]:
         draw_commands = []
         planned_bounds: Bounds | None = None
@@ -419,6 +441,8 @@ class FuriganaRenderer:
                     font=font,
                     furigana_font=furigana_font,
                     line_shift=line_shift,
+                    char_spacing=region_sizing.char_spacing,
+                    furigana_spacing=region_sizing.furigana_spacing,
                 )
                 draw_commands.extend(line_commands)
                 planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
@@ -480,6 +504,8 @@ class FuriganaRenderer:
         font: ImageFont.ImageFont,
         furigana_font: ImageFont.ImageFont,
         line_shift: float,
+        char_spacing: int,
+        furigana_spacing: int,
     ) -> tuple[list[DrawCommand], Bounds | None]:
         draw_commands = []
         planned_bounds: Bounds | None = None
@@ -502,7 +528,7 @@ class FuriganaRenderer:
                 )
                 draw_commands.append(command)
                 planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
-                y_cursor += h_char + self.config.vertical.char_spacing
+                y_cursor += h_char + char_spacing
 
             if segment.needs_furigana:
                 y_furi = y_segment_start
@@ -518,7 +544,7 @@ class FuriganaRenderer:
                     )
                     draw_commands.append(command)
                     planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
-                    y_furi += h_f + self.config.vertical.furigana_spacing
+                    y_furi += h_f + furigana_spacing
         return draw_commands, planned_bounds
 
     def _plan_horizontal_line_layout(
@@ -621,13 +647,16 @@ class FuriganaRenderer:
         )
 
     def _describe_vertical_columns_furigana_space_needs(
-        self, result: PageTextExtractionResultDict, furigana_size: int
+        self,
+        result: PageTextExtractionResultDict,
+        region_sizings: list[ResolvedRegionSizing],
     ) -> list[VerticalLineLayoutNeed]:
         lines_info: list[VerticalLineLayoutNeed] = []
         counter = 0
-        for text_region in result.get("text_regions", []):
+        for region_index, text_region in enumerate(result.get("text_regions", [])):
             if not text_region.get("is_vertical", False):
                 continue
+            furigana_size = region_sizings[region_index].furigana_size
             for line_text, line_coords in zip(
                 text_region.get("line_texts", []),
                 text_region.get("line_outline_points", []),
@@ -718,10 +747,187 @@ class FuriganaRenderer:
         return offsets
 
     def _plan_vertical_column_shifts_for_furigana(
-        self, result: PageTextExtractionResultDict, furigana_size: int
+        self,
+        result: PageTextExtractionResultDict,
+        region_sizings: list[ResolvedRegionSizing],
     ) -> dict[int, float]:
         lines_info = self._describe_vertical_columns_furigana_space_needs(
-            result, furigana_size
+            result=result, region_sizings=region_sizings
         )
         groups = self._cluster_colliding_vertical_columns_for_furigana(lines_info)
         return self._resolve_vertical_column_shift_by_cluster(groups)
+
+    def _resolve_region_sizings(
+        self, result: PageTextExtractionResultDict, measure_draw: ImageDraw.ImageDraw
+    ) -> list[ResolvedRegionSizing]:
+        region_sizings: list[ResolvedRegionSizing] = []
+        for region_index, text_region in enumerate(result.get("text_regions", [])):
+            region_sizing = self._resolve_region_sizing(
+                text_region=text_region, measure_draw=measure_draw
+            )
+            region_sizings.append(region_sizing)
+            logger.debug(
+                "Region {} resolved sizing: main={}, furigana={}, char_spacing={}, furigana_spacing={}",
+                region_index,
+                region_sizing.main_size,
+                region_sizing.furigana_size,
+                region_sizing.char_spacing,
+                region_sizing.furigana_spacing,
+            )
+        return region_sizings
+
+    def _resolve_region_sizing(
+        self,
+        text_region: ExtractedTextRegionDict,
+        measure_draw: ImageDraw.ImageDraw,
+    ) -> ResolvedRegionSizing:
+        vertical = bool(text_region.get("is_vertical", False))
+        line_outline_points = text_region.get("line_outline_points", [])
+        line_guesses: list[int] = []
+
+        for line_coords in line_outline_points:
+            line_bounds = self._compute_outline_bounds(line_coords)
+            if line_bounds is None:
+                continue
+            target_dimension = (
+                line_bounds[2] - line_bounds[0]
+                if vertical
+                else line_bounds[3] - line_bounds[1]
+            )
+            guess = self._estimate_main_size_from_target_dimension(
+                draw=measure_draw,
+                target_dimension=target_dimension,
+                vertical=vertical,
+            )
+            if guess is not None:
+                line_guesses.append(guess)
+
+        if line_guesses:
+            raw_main_size = round(median(line_guesses))
+            main_size = self._clamp_main_size(raw_main_size)
+            logger.debug(
+                "Region dynamic sizing: line_guesses={}, median={}, clamped={}",
+                line_guesses,
+                raw_main_size,
+                main_size,
+            )
+        else:
+            main_size = self._resolve_main_size_fallback(
+                estimated_font_size=text_region.get(
+                    "estimated_font_size", self.config.sizing.default_main_size
+                )
+            )
+            logger.debug(
+                "Region sizing fallback used: estimated_font_size={}, resolved_main_size={}",
+                text_region.get("estimated_font_size", self.config.sizing.default_main_size),
+                main_size,
+            )
+
+        furigana_size = max(
+            self.config.sizing.min_furigana_size,
+            min(
+                self.config.sizing.max_furigana_size,
+                round(main_size * self.config.sizing.furigana_ratio),
+            ),
+        )
+        char_spacing = max(
+            self.config.sizing.min_char_spacing,
+            round(main_size * self.config.sizing.char_spacing_ratio),
+        )
+        furigana_spacing = max(
+            self.config.sizing.min_furigana_spacing,
+            round(furigana_size * self.config.sizing.furigana_spacing_ratio),
+        )
+        return ResolvedRegionSizing(
+            main_size=main_size,
+            furigana_size=furigana_size,
+            char_spacing=char_spacing,
+            furigana_spacing=furigana_spacing,
+        )
+
+    def _estimate_main_size_from_target_dimension(
+        self, draw: ImageDraw.ImageDraw, target_dimension: float, vertical: bool
+    ) -> int | None:
+        if target_dimension < self.config.sizing.min_target_dimension:
+            logger.debug(
+                "Sizing micro-check skipped: target_dimension={} below min_target_dimension={}",
+                target_dimension,
+                self.config.sizing.min_target_dimension,
+            )
+            return None
+        probe_dimension_at_1 = self._measure_probe_dimension(
+            draw=draw,
+            font_size=1,
+            vertical=vertical,
+        )
+        if probe_dimension_at_1 <= 0:
+            logger.debug(
+                "Sizing micro-check failed: probe_dimension_at_1={} for vertical={}",
+                probe_dimension_at_1,
+                vertical,
+            )
+            return None
+
+        guessed_raw = round(
+            (target_dimension / probe_dimension_at_1) * self.config.sizing.main_scale_bias
+        )
+        guessed = self._clamp_main_size(guessed_raw)
+        if not self.config.sizing.enable_one_step_correction:
+            logger.debug(
+                "Sizing micro-check: vertical={}, target={}, probe_at_1={}, s0_raw={}, s0_clamped={}, correction=disabled, final={}",
+                vertical,
+                target_dimension,
+                probe_dimension_at_1,
+                guessed_raw,
+                guessed,
+                guessed,
+            )
+            return guessed
+
+        measured = self._measure_probe_dimension(
+            draw=draw, font_size=guessed, vertical=vertical
+        )
+        if measured <= 0:
+            logger.debug(
+                "Sizing micro-check: vertical={}, target={}, probe_at_1={}, s0_raw={}, s0_clamped={}, measured_at_s0={}, correction=skipped, final={}",
+                vertical,
+                target_dimension,
+                probe_dimension_at_1,
+                guessed_raw,
+                guessed,
+                measured,
+                guessed,
+            )
+            return guessed
+        corrected_raw = round(guessed * (target_dimension / measured))
+        corrected = self._clamp_main_size(corrected_raw)
+        logger.debug(
+            "Sizing micro-check: vertical={}, target={}, probe_at_1={}, s0_raw={}, s0_clamped={}, measured_at_s0={}, s1_raw={}, final={}",
+            vertical,
+            target_dimension,
+            probe_dimension_at_1,
+            guessed_raw,
+            guessed,
+            measured,
+            corrected_raw,
+            corrected,
+        )
+        return corrected
+
+    def _measure_probe_dimension(
+        self, draw: ImageDraw.ImageDraw, font_size: int, vertical: bool
+    ) -> float:
+        font = self._load_japanese_font(max(1, font_size))
+        bbox = draw.textbbox((0, 0), self.config.sizing.probe_glyph, font=font)
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+        return float(width if vertical else height)
+
+    def _resolve_main_size_fallback(self, estimated_font_size: int) -> int:
+        if self.config.sizing.use_ocr_estimate_fallback:
+            scaled = round(estimated_font_size * self.config.sizing.ocr_fallback_main_scale)
+            return self._clamp_main_size(scaled)
+        return self._clamp_main_size(self.config.sizing.default_main_size)
+
+    def _clamp_main_size(self, size: int) -> int:
+        return max(self.config.sizing.min_main_size, min(self.config.sizing.max_main_size, size))
