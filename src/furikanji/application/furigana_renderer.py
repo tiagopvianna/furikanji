@@ -1,26 +1,16 @@
 from pathlib import Path
-import re
 from dataclasses import dataclass
 
-import jaconv
-from fugashi import Tagger
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
+
+from src.furikanji.application.interfaces import FuriganaReadingGenerator, FuriganaSegment
 
 
 @dataclass(frozen=True)
 class RenderingContext:
     image: Image.Image
     draw: ImageDraw.ImageDraw
-    tagger: Tagger
-    kanji_regex: re.Pattern
-
-
-@dataclass(frozen=True)
-class TokenReading:
-    surface: str
-    reading: str
-    needs_furigana: bool
 
 
 @dataclass(frozen=True)
@@ -58,6 +48,9 @@ class FuriganaRenderer:
     VERTICAL_FURIGANA_SPACING = 2
     HORIZONTAL_FURIGANA_GAP = 2
 
+    def __init__(self, furigana_reading_generator: FuriganaReadingGenerator):
+        self.furigana_reading_generator = furigana_reading_generator
+
     def _load_japanese_font(self, size):
         font_path = Path(__file__).parent.parent / "fonts" / "NotoSansCJKjp-Regular.otf"
         try:
@@ -65,12 +58,10 @@ class FuriganaRenderer:
         except (IOError, OSError):
             return ImageFont.load_default()
 
-    def render_overlay(self, image_path, result, overlay_output_path):
+    def __call__(self, image_path, result, overlay_output_path):
         context = self._initialize_rendering_context(image_path=image_path)
         offsets = self._plan_vertical_layout_shifts(
             result=result,
-            tagger=context.tagger,
-            kanji_regex=context.kanji_regex,
             furigana_size=self.VERTICAL_PLANNING_FURIGANA_SIZE,
         )
         vertical_line_index = 0
@@ -90,8 +81,6 @@ class FuriganaRenderer:
         return RenderingContext(
             image=image,
             draw=ImageDraw.Draw(image),
-            tagger=Tagger(),
-            kanji_regex=re.compile(r"[\u4E00-\u9FFF]"),
         )
 
     def _render_text_region_overlay(self, context, text_region, offsets, vertical_line_index):
@@ -108,8 +97,6 @@ class FuriganaRenderer:
             line_outline_points=line_outline_points,
             font=font,
             furigana_font=furigana_font,
-            tagger=context.tagger,
-            kanji_regex=context.kanji_regex,
             offsets=offsets,
             vertical_line_index=vertical_line_index,
         )
@@ -185,8 +172,6 @@ class FuriganaRenderer:
         line_outline_points,
         font,
         furigana_font,
-        tagger,
-        kanji_regex,
         offsets,
         vertical_line_index,
     ):
@@ -200,15 +185,15 @@ class FuriganaRenderer:
             bounds = self._measure_line_bounds(line_coords)
             if bounds is None:
                 continue
-            tokens = self._tokenize_with_readings(
-                line_text=line_text, tagger=tagger, kanji_regex=kanji_regex
+            segments = self.furigana_reading_generator.resolve_line_segments(
+                line_text=line_text
             )
             if vertical:
                 line_shift = offsets.get(vertical_line_index, 0)
                 line_commands, line_bounds = self._plan_vertical_line_layout(
                     draw=draw,
                     bounds=bounds,
-                    tokens=tokens,
+                    segments=segments,
                     font=font,
                     furigana_font=furigana_font,
                     line_shift=line_shift,
@@ -220,7 +205,7 @@ class FuriganaRenderer:
                 line_commands, line_bounds = self._plan_horizontal_line_layout(
                     draw=draw,
                     bounds=bounds,
-                    tokens=tokens,
+                    segments=segments,
                     font=font,
                     furigana_font=furigana_font,
                 )
@@ -248,37 +233,23 @@ class FuriganaRenderer:
         ys = [pt[1] for pt in line_coords]
         return LineBounds(x_min=min(xs), x_max=max(xs), y_min=min(ys), y_max=max(ys))
 
-    def _tokenize_with_readings(self, line_text, tagger, kanji_regex):
-        tokens = []
-        for word in tagger(line_text):
-            surface = word.surface
-            kana = getattr(word.feature, "kana", None)
-            reading = jaconv.kata2hira(kana) if kana else surface
-            tokens.append(
-                TokenReading(
-                    surface=surface,
-                    reading=reading,
-                    needs_furigana=self._classify_token_requires_furigana(
-                        surface=surface, reading=reading, kanji_regex=kanji_regex
-                    ),
-                )
-            )
-        return tokens
-
-    def _classify_token_requires_furigana(self, surface, reading, kanji_regex):
-        return bool(kanji_regex.search(surface) and surface != reading)
-
     def _plan_vertical_line_layout(
-        self, draw, bounds, tokens, font, furigana_font, line_shift
+        self,
+        draw,
+        bounds,
+        segments: list[FuriganaSegment],
+        font,
+        furigana_font,
+        line_shift,
     ):
         draw_commands = []
         planned_bounds = None
         x_min_shifted = bounds.x_min + line_shift
         x_max_shifted = bounds.x_max + line_shift
         y_cursor = bounds.y_min
-        for token in tokens:
-            y_token_start = y_cursor
-            for char in token.surface:
+        for segment in segments:
+            y_segment_start = y_cursor
+            for char in segment.base_text:
                 bbox = draw.textbbox((0, 0), char, font=font)
                 w_char = bbox[2] - bbox[0]
                 h_char = bbox[3] - bbox[1]
@@ -294,9 +265,9 @@ class FuriganaRenderer:
                 planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
                 y_cursor += h_char + self.VERTICAL_CHAR_SPACING
 
-            if token.needs_furigana:
-                y_furi = y_token_start
-                for kana_char in token.reading:
+            if segment.needs_furigana:
+                y_furi = y_segment_start
+                for kana_char in segment.reading:
                     bbox_f = draw.textbbox((0, 0), kana_char, font=furigana_font)
                     h_f = bbox_f[3] - bbox_f[1]
                     command, command_bounds = self._build_draw_command(
@@ -312,23 +283,23 @@ class FuriganaRenderer:
         return draw_commands, planned_bounds
 
     def _plan_horizontal_line_layout(
-        self, draw, bounds, tokens, font, furigana_font
+        self, draw, bounds, segments: list[FuriganaSegment], font, furigana_font
     ):
         draw_commands = []
         planned_bounds = None
         x_cursor = bounds.x_min
-        for token in tokens:
-            bbox_word = draw.textbbox((0, 0), token.surface, font=font)
+        for segment in segments:
+            bbox_word = draw.textbbox((0, 0), segment.base_text, font=font)
             w_word = bbox_word[2] - bbox_word[0]
-            if token.needs_furigana:
-                bbox_ruby = draw.textbbox((0, 0), token.reading, font=furigana_font)
+            if segment.needs_furigana:
+                bbox_ruby = draw.textbbox((0, 0), segment.reading, font=furigana_font)
                 w_ruby = bbox_ruby[2] - bbox_ruby[0]
                 h_ruby = bbox_ruby[3] - bbox_ruby[1]
                 ruby_x = x_cursor + (w_word - w_ruby) / 2
                 ruby_y = bounds.y_min - h_ruby - self.HORIZONTAL_FURIGANA_GAP
                 command, command_bounds = self._build_draw_command(
                     draw=draw,
-                    text=token.reading,
+                    text=segment.reading,
                     x=ruby_x,
                     y=ruby_y,
                     font=furigana_font,
@@ -337,7 +308,7 @@ class FuriganaRenderer:
                 planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
             command, command_bounds = self._build_draw_command(
                 draw=draw,
-                text=token.surface,
+                text=segment.base_text,
                 x=x_cursor,
                 y=bounds.y_min,
                 font=font,
@@ -363,7 +334,7 @@ class FuriganaRenderer:
             max(bounds_a[3], bounds_b[3]),
         )
 
-    def _describe_vertical_line_layout_needs(self, result, tagger, kanji_regex, furigana_size):
+    def _describe_vertical_line_layout_needs(self, result, furigana_size):
         lines_info = []
         counter = 0
         for text_region in result.get("text_regions", []):
@@ -378,12 +349,11 @@ class FuriganaRenderer:
                 x_min, x_max = min(xs), max(xs)
                 y_min, y_max = min(ys), max(ys)
                 width = x_max - x_min
-                has_kanji = any(
-                    kanji_regex.search(word.surface)
-                    and (jaconv.kata2hira(getattr(word.feature, "kana", "")) != word.surface)
-                    for word in tagger(line_text)
+                segments = self.furigana_reading_generator.resolve_line_segments(line_text)
+                has_furigana_segments = any(
+                    segment.needs_furigana for segment in segments
                 )
-                required_space = furigana_size + 2 if has_kanji else 0
+                required_space = furigana_size + 2 if has_furigana_segments else 0
                 lines_info.append(
                     {
                         "index": counter,
@@ -438,9 +408,7 @@ class FuriganaRenderer:
                 offsets[line["index"]] = dx
         return offsets
 
-    def _plan_vertical_layout_shifts(self, result, tagger, kanji_regex, furigana_size):
-        lines_info = self._describe_vertical_line_layout_needs(
-            result, tagger, kanji_regex, furigana_size
-        )
+    def _plan_vertical_layout_shifts(self, result, furigana_size):
+        lines_info = self._describe_vertical_line_layout_needs(result, furigana_size)
         groups = self._cluster_colliding_vertical_columns(lines_info)
         return self._resolve_column_shift_by_cluster(groups)

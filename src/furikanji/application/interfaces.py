@@ -38,3 +38,15 @@ class TextLocalizerAdapter(Protocol):
 class TextTranscriberAdapter(Protocol):
     def transcribe_text(self, image_crop: Image.Image) -> str:
         """Return transcribed text for a cropped line image."""
+
+
+@dataclass(frozen=True)
+class FuriganaSegment:
+    base_text: str
+    reading: str
+    needs_furigana: bool
+
+
+class FuriganaReadingGenerator(Protocol):
+    def resolve_line_segments(self, line_text: str) -> List[FuriganaSegment]:
+        """Return ordered furigana-ready segments for one OCR line."""

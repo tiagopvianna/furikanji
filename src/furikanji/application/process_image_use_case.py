@@ -43,5 +43,5 @@ class ProcessImageUseCase:
     ) -> PageTextExtractionResultDict:
         result = self.page_text_extractor(image_path)
         self.json_dumper(result, json_output_path)
-        self.furigana_renderer.render_overlay(image_path, result, overlay_output_path)
+        self.furigana_renderer(image_path, result, overlay_output_path)
         return result

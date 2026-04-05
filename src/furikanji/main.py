@@ -2,6 +2,9 @@ import fire
 import numpy as np
 
 from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
+from src.furikanji.adapters.fugashi_furigana_reading_generator import (
+    FugashiFuriganaReadingGenerator,
+)
 from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
 from src.furikanji.application.furigana_renderer import FuriganaRenderer
 from src.furikanji.application.interfaces import TextLocalizationResult
@@ -61,7 +64,10 @@ def process_single_image(
         disable_ocr=disable_ocr,
         **extractor_kwargs,
     )
-    furigana_renderer = FuriganaRenderer()
+    furigana_reading_generator = FugashiFuriganaReadingGenerator()
+    furigana_renderer = FuriganaRenderer(
+        furigana_reading_generator=furigana_reading_generator
+    )
     process_image_use_case = ProcessImageUseCase(page_text_extractor, furigana_renderer)
     process_image_use_case(
         image_path=image_path,
