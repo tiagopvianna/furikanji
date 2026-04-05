@@ -125,6 +125,10 @@ class FuriganaRenderConfig:
     vertical: VerticalLayoutConfig = field(default_factory=VerticalLayoutConfig)
     horizontal: HorizontalLayoutConfig = field(default_factory=HorizontalLayoutConfig)
     sizing: SizingConfig = field(default_factory=SizingConfig)
+    draw_target_boxes: bool = False
+    target_box_color: tuple[int, int, int] = (0, 255, 0)
+    target_box_width: int = 2
+    draw_overlay_text: bool = True
 
 
 class FuriganaRenderer:
@@ -150,6 +154,8 @@ class FuriganaRenderer:
         overlay_output_path: str,
     ) -> None:
         context = self._initialize_rendering_context(image_path=image_path)
+        if self.config.draw_target_boxes:
+            self._draw_line_target_boxes(draw=context.draw, result=result)
         image_width, image_height = context.image.size
         logger.info(
             "Starting furigana render pass: image={}x{}, text_regions={}",
@@ -163,10 +169,25 @@ class FuriganaRenderer:
             measure_draw=context.draw,
             image_size=(image_width, image_height),
         )
-        self.paint_page_render_plan(
-            draw=context.draw, page_render_plan=page_render_plan
-        )
+        if self.config.draw_overlay_text:
+            self.paint_page_render_plan(
+                draw=context.draw, page_render_plan=page_render_plan
+            )
         context.image.save(overlay_output_path)
+
+    def _draw_line_target_boxes(
+        self, draw: ImageDraw.ImageDraw, result: PageTextExtractionResultDict
+    ) -> None:
+        for text_region in result.get("text_regions", []):
+            for line_coords in text_region.get("line_outline_points", []):
+                bounds = self._compute_outline_bounds(line_coords)
+                if bounds is None:
+                    continue
+                draw.rectangle(
+                    [bounds[0:2], bounds[2:4]],
+                    outline=self.config.target_box_color,
+                    width=self.config.target_box_width,
+                )
 
     def _initialize_rendering_context(self, image_path: str) -> RenderingContext:
         image = Image.open(image_path).convert("RGB")

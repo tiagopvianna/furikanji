@@ -6,7 +6,10 @@ from src.furikanji.adapters.fugashi_furigana_reading_generator import (
     FugashiFuriganaReadingGenerator,
 )
 from src.furikanji.adapters.manga_ocr_text_transcriber import MangaOcrTextTranscriber
-from src.furikanji.application.furigana_renderer import FuriganaRenderer
+from src.furikanji.application.furigana_renderer import (
+    FuriganaRenderConfig,
+    FuriganaRenderer,
+)
 from src.furikanji.application.interfaces import TextLocalizationResult
 from src.furikanji.application.page_text_extractor import PageTextExtractor
 from src.furikanji.application.process_image_use_case import ProcessImageUseCase
@@ -34,6 +37,8 @@ def process_single_image(
     force_cpu: bool = False,
     pretrained_model_name_or_path: str = "kha-white/manga-ocr-base",
     disable_ocr: bool = False,
+    draw_target_boxes: bool = False,
+    draw_overlay_text: bool = True,
     **extractor_kwargs,
 ):
     normalized_device = device.lower()
@@ -66,7 +71,11 @@ def process_single_image(
     )
     furigana_reading_generator = FugashiFuriganaReadingGenerator()
     furigana_renderer = FuriganaRenderer(
-        furigana_reading_generator=furigana_reading_generator
+        furigana_reading_generator=furigana_reading_generator,
+        config=FuriganaRenderConfig(
+            draw_target_boxes=draw_target_boxes,
+            draw_overlay_text=draw_overlay_text,
+        ),
     )
     process_image_use_case = ProcessImageUseCase(page_text_extractor, furigana_renderer)
     process_image_use_case(
