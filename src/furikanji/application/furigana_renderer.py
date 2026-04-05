@@ -1,10 +1,15 @@
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Iterable
 
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
 from src.furikanji.application.interfaces import FuriganaReadingGenerator, FuriganaSegment
+from src.furikanji.application.page_text_extractor import (
+    ExtractedTextRegionDict,
+    PageTextExtractionResultDict,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,22 @@ class DrawCommand:
     font: ImageFont.ImageFont
 
 
+@dataclass(frozen=True)
+class VerticalLineLayoutNeed:
+    index: int
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+    width: float
+    required_space: float
+
+
+Bounds = tuple[float, float, float, float]
+LineOutline = list[list[float]]
+LineOutlineList = list[LineOutline]
+
+
 class FuriganaRenderer:
     ERASE_STRATEGY_PLANNED_TEXT = "planned_text"
     ERASE_STRATEGY_DETECTED_REGION = "detected_region"
@@ -48,17 +69,22 @@ class FuriganaRenderer:
     VERTICAL_FURIGANA_SPACING = 2
     HORIZONTAL_FURIGANA_GAP = 2
 
-    def __init__(self, furigana_reading_generator: FuriganaReadingGenerator):
+    def __init__(self, furigana_reading_generator: FuriganaReadingGenerator) -> None:
         self.furigana_reading_generator = furigana_reading_generator
 
-    def _load_japanese_font(self, size):
+    def _load_japanese_font(self, size: int) -> ImageFont.ImageFont:
         font_path = Path(__file__).parent.parent / "fonts" / "NotoSansCJKjp-Regular.otf"
         try:
             return ImageFont.truetype(str(font_path), size)
         except (IOError, OSError):
             return ImageFont.load_default()
 
-    def __call__(self, image_path, result, overlay_output_path):
+    def __call__(
+        self,
+        image_path: str,
+        result: PageTextExtractionResultDict,
+        overlay_output_path: str,
+    ) -> None:
         context = self._initialize_rendering_context(image_path=image_path)
         offsets = self._plan_vertical_layout_shifts(
             result=result,
@@ -76,14 +102,20 @@ class FuriganaRenderer:
             )
         context.image.save(overlay_output_path)
 
-    def _initialize_rendering_context(self, image_path):
+    def _initialize_rendering_context(self, image_path: str) -> RenderingContext:
         image = Image.open(image_path).convert("RGB")
         return RenderingContext(
             image=image,
             draw=ImageDraw.Draw(image),
         )
 
-    def _render_text_region_overlay(self, context, text_region, offsets, vertical_line_index):
+    def _render_text_region_overlay(
+        self,
+        context: RenderingContext,
+        text_region: ExtractedTextRegionDict,
+        offsets: dict[int, float],
+        vertical_line_index: int,
+    ) -> int:
         vertical = bool(text_region.get("is_vertical", False))
         line_texts = text_region.get("line_texts", [])
         line_outline_points = text_region.get("line_outline_points", [])
@@ -108,13 +140,20 @@ class FuriganaRenderer:
         self._paint_planned_region_text(draw=context.draw, draw_commands=draw_commands)
         return vertical_line_index
 
-    def _build_region_fonts(self, estimated_font_size):
+    def _build_region_fonts(
+        self, estimated_font_size: int
+    ) -> tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
         main_font_size = max(1, estimated_font_size - self.MAIN_FONT_SIZE_OFFSET)
         main_font = self._load_japanese_font(main_font_size)
         furigana_font = self._load_japanese_font(self.REGION_FURIGANA_FONT_SIZE)
         return main_font, furigana_font
 
-    def _erase_background_for_region(self, draw, line_outline_points, planned_bounds):
+    def _erase_background_for_region(
+        self,
+        draw: ImageDraw.ImageDraw,
+        line_outline_points: LineOutlineList,
+        planned_bounds: Bounds | None,
+    ) -> None:
         if self.ERASE_STRATEGY == self.ERASE_STRATEGY_PLANNED_TEXT:
             self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
             return
@@ -126,7 +165,11 @@ class FuriganaRenderer:
         logger.warning(f"Unknown erase strategy '{self.ERASE_STRATEGY}', using planned_text")
         self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
 
-    def _erase_detected_region_background(self, draw, line_outline_points):
+    def _erase_detected_region_background(
+        self,
+        draw: ImageDraw.ImageDraw,
+        line_outline_points: LineOutlineList,
+    ) -> None:
         all_points = [pt for line in line_outline_points for pt in line]
         if not all_points:
             return
@@ -146,7 +189,11 @@ class FuriganaRenderer:
             fill=(255, 255, 255),
         )
 
-    def _erase_planned_text_background(self, draw, planned_bounds):
+    def _erase_planned_text_background(
+        self,
+        draw: ImageDraw.ImageDraw,
+        planned_bounds: Bounds | None,
+    ) -> None:
         if planned_bounds is None:
             return
         x0, y0, x1, y1 = planned_bounds
@@ -166,17 +213,17 @@ class FuriganaRenderer:
 
     def _plan_region_text_layout(
         self,
-        draw,
-        vertical,
-        line_texts,
-        line_outline_points,
-        font,
-        furigana_font,
-        offsets,
-        vertical_line_index,
-    ):
+        draw: ImageDraw.ImageDraw,
+        vertical: bool,
+        line_texts: list[str],
+        line_outline_points: LineOutlineList,
+        font: ImageFont.ImageFont,
+        furigana_font: ImageFont.ImageFont,
+        offsets: dict[int, float],
+        vertical_line_index: int,
+    ) -> tuple[list[DrawCommand], Bounds | None, int]:
         draw_commands = []
-        planned_bounds = None
+        planned_bounds: Bounds | None = None
         for line_text, line_coords in self._safe_zip_region_lines(
             line_texts=line_texts, line_outline_points=line_outline_points
         ):
@@ -213,11 +260,15 @@ class FuriganaRenderer:
                 planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
         return draw_commands, planned_bounds, vertical_line_index
 
-    def _paint_planned_region_text(self, draw, draw_commands):
+    def _paint_planned_region_text(
+        self, draw: ImageDraw.ImageDraw, draw_commands: list[DrawCommand]
+    ) -> None:
         for command in draw_commands:
             draw.text((command.x, command.y), command.text, fill=(0, 0, 0), font=command.font)
 
-    def _safe_zip_region_lines(self, line_texts, line_outline_points):
+    def _safe_zip_region_lines(
+        self, line_texts: list[str], line_outline_points: LineOutlineList
+    ) -> Iterable[tuple[str, LineOutline]]:
         if len(line_texts) != len(line_outline_points):
             logger.warning(
                 "Region has mismatched line payload sizes: "
@@ -225,7 +276,7 @@ class FuriganaRenderer:
             )
         return zip(line_texts, line_outline_points)
 
-    def _measure_line_bounds(self, line_coords):
+    def _measure_line_bounds(self, line_coords: LineOutline) -> LineBounds | None:
         if not line_coords:
             logger.warning("Skipping line with empty outline points")
             return None
@@ -235,15 +286,15 @@ class FuriganaRenderer:
 
     def _plan_vertical_line_layout(
         self,
-        draw,
-        bounds,
+        draw: ImageDraw.ImageDraw,
+        bounds: LineBounds,
         segments: list[FuriganaSegment],
-        font,
-        furigana_font,
-        line_shift,
-    ):
+        font: ImageFont.ImageFont,
+        furigana_font: ImageFont.ImageFont,
+        line_shift: float,
+    ) -> tuple[list[DrawCommand], Bounds | None]:
         draw_commands = []
-        planned_bounds = None
+        planned_bounds: Bounds | None = None
         x_min_shifted = bounds.x_min + line_shift
         x_max_shifted = bounds.x_max + line_shift
         y_cursor = bounds.y_min
@@ -283,10 +334,15 @@ class FuriganaRenderer:
         return draw_commands, planned_bounds
 
     def _plan_horizontal_line_layout(
-        self, draw, bounds, segments: list[FuriganaSegment], font, furigana_font
-    ):
+        self,
+        draw: ImageDraw.ImageDraw,
+        bounds: LineBounds,
+        segments: list[FuriganaSegment],
+        font: ImageFont.ImageFont,
+        furigana_font: ImageFont.ImageFont,
+    ) -> tuple[list[DrawCommand], Bounds | None]:
         draw_commands = []
-        planned_bounds = None
+        planned_bounds: Bounds | None = None
         x_cursor = bounds.x_min
         for segment in segments:
             bbox_word = draw.textbbox((0, 0), segment.base_text, font=font)
@@ -318,11 +374,20 @@ class FuriganaRenderer:
             x_cursor += w_word
         return draw_commands, planned_bounds
 
-    def _build_draw_command(self, draw, text, x, y, font):
+    def _build_draw_command(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        x: float,
+        y: float,
+        font: ImageFont.ImageFont,
+    ) -> tuple[DrawCommand, Bounds]:
         command = DrawCommand(text=text, x=x, y=y, font=font)
         return command, draw.textbbox((x, y), text, font=font)
 
-    def _merge_bounds(self, bounds_a, bounds_b):
+    def _merge_bounds(
+        self, bounds_a: Bounds | None, bounds_b: Bounds | None
+    ) -> Bounds | None:
         if bounds_a is None:
             return bounds_b
         if bounds_b is None:
@@ -334,8 +399,10 @@ class FuriganaRenderer:
             max(bounds_a[3], bounds_b[3]),
         )
 
-    def _describe_vertical_line_layout_needs(self, result, furigana_size):
-        lines_info = []
+    def _describe_vertical_line_layout_needs(
+        self, result: PageTextExtractionResultDict, furigana_size: int
+    ) -> list[VerticalLineLayoutNeed]:
+        lines_info: list[VerticalLineLayoutNeed] = []
         counter = 0
         for text_region in result.get("text_regions", []):
             if not text_region.get("is_vertical", False):
@@ -355,31 +422,36 @@ class FuriganaRenderer:
                 )
                 required_space = furigana_size + 2 if has_furigana_segments else 0
                 lines_info.append(
-                    {
-                        "index": counter,
-                        "x_min": x_min,
-                        "x_max": x_max,
-                        "y_min": y_min,
-                        "y_max": y_max,
-                        "width": width,
-                        "required_space": required_space,
-                    }
+                    VerticalLineLayoutNeed(
+                        index=counter,
+                        x_min=x_min,
+                        x_max=x_max,
+                        y_min=y_min,
+                        y_max=y_max,
+                        width=width,
+                        required_space=required_space,
+                    )
                 )
                 counter += 1
         return lines_info
 
-    def _cluster_colliding_vertical_columns(self, lines_info, x_thresh=12, y_overlap_min=1):
-        groups = []
+    def _cluster_colliding_vertical_columns(
+        self,
+        lines_info: list[VerticalLineLayoutNeed],
+        x_thresh: int = 12,
+        y_overlap_min: int = 1,
+    ) -> list[list[VerticalLineLayoutNeed]]:
+        groups: list[list[VerticalLineLayoutNeed]] = []
 
-        def overlaps(a, b):
-            y_overlap = min(a["y_max"], b["y_max"]) - max(a["y_min"], b["y_min"])
+        def overlaps(a: VerticalLineLayoutNeed, b: VerticalLineLayoutNeed) -> bool:
+            y_overlap = min(a.y_max, b.y_max) - max(a.y_min, b.y_min)
             if y_overlap < y_overlap_min:
                 return False
-            if abs(a["x_min"] - b["x_max"]) < x_thresh or abs(a["x_max"] - b["x_min"]) < x_thresh:
+            if abs(a.x_min - b.x_max) < x_thresh or abs(a.x_max - b.x_min) < x_thresh:
                 return True
             return False
 
-        for line in sorted(lines_info, key=lambda l: l["x_min"]):
+        for line in sorted(lines_info, key=lambda l: l.x_min):
             placed = False
             for group in groups:
                 if any(overlaps(line, member) for member in group):
@@ -390,25 +462,29 @@ class FuriganaRenderer:
                 groups.append([line])
         return groups
 
-    def _resolve_column_shift_by_cluster(self, groups):
-        offsets = {}
+    def _resolve_column_shift_by_cluster(
+        self, groups: list[list[VerticalLineLayoutNeed]]
+    ) -> dict[int, float]:
+        offsets: dict[int, float] = {}
         for group in groups:
-            group_sorted = sorted(group, key=lambda l: l["x_min"])
+            group_sorted = sorted(group, key=lambda l: l.x_min)
             # First line in group: no shift
             first = group_sorted[0]
-            offsets[first["index"]] = 0
+            offsets[first.index] = 0
             for prev_line, line in zip(group_sorted, group_sorted[1:]):
-                prev_index = prev_line["index"]
-                prev_x_min = prev_line["x_min"]
-                prev_width = prev_line["width"]
-                prev_space = prev_line["required_space"]
+                prev_index = prev_line.index
+                prev_x_min = prev_line.x_min
+                prev_width = prev_line.width
+                prev_space = prev_line.required_space
                 prev_dx = offsets[prev_index]
                 prev_shifted_right = prev_x_min + prev_dx + prev_width + prev_space
-                dx = prev_shifted_right - line["x_min"]
-                offsets[line["index"]] = dx
+                dx = prev_shifted_right - line.x_min
+                offsets[line.index] = dx
         return offsets
 
-    def _plan_vertical_layout_shifts(self, result, furigana_size):
+    def _plan_vertical_layout_shifts(
+        self, result: PageTextExtractionResultDict, furigana_size: int
+    ) -> dict[int, float]:
         lines_info = self._describe_vertical_line_layout_needs(result, furigana_size)
         groups = self._cluster_colliding_vertical_columns(lines_info)
         return self._resolve_column_shift_by_cluster(groups)
