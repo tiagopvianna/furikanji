@@ -1,11 +1,14 @@
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable
 
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
-from src.furikanji.application.interfaces import FuriganaReadingGenerator, FuriganaSegment
+from src.furikanji.application.interfaces import (
+    FuriganaReadingGenerator,
+    FuriganaSegment,
+)
 from src.furikanji.application.page_text_extractor import (
     ExtractedTextRegionDict,
     PageTextExtractionResultDict,
@@ -127,11 +130,22 @@ class FuriganaRenderer:
         overlay_output_path: str,
     ) -> None:
         context = self._initialize_rendering_context(image_path=image_path)
+        image_width, image_height = context.image.size
+        logger.info(
+            "Starting furigana render pass: image={}x{}, text_regions={}",
+            image_width,
+            image_height,
+            len(result.get("text_regions", [])),
+        )
         logger.debug(result)
         page_render_plan = self.build_page_render_plan(
-            result=result, measure_draw=context.draw
+            result=result,
+            measure_draw=context.draw,
+            image_size=(image_width, image_height),
         )
-        self.paint_page_render_plan(draw=context.draw, page_render_plan=page_render_plan)
+        self.paint_page_render_plan(
+            draw=context.draw, page_render_plan=page_render_plan
+        )
         context.image.save(overlay_output_path)
 
     def _initialize_rendering_context(self, image_path: str) -> RenderingContext:
@@ -145,19 +159,23 @@ class FuriganaRenderer:
         self,
         result: PageTextExtractionResultDict,
         measure_draw: ImageDraw.ImageDraw,
+        image_size: tuple[int, int],
     ) -> PageRenderPlan:
         offsets = self._plan_vertical_column_shifts_for_furigana(
             result=result,
             furigana_size=self.config.vertical.planning_furigana_size,
         )
+        logger.debug("Vertical column shifts for furigana: {}", offsets)
         vertical_line_index = 0
         region_plans: list[RegionRenderPlan] = []
-        for text_region in result.get("text_regions", []):
+        for region_index, text_region in enumerate(result.get("text_regions", [])):
             region_render_plan, vertical_line_index = self._build_region_render_plan(
                 measure_draw=measure_draw,
                 text_region=text_region,
                 offsets=offsets,
                 vertical_line_index=vertical_line_index,
+                region_index=region_index,
+                image_size=image_size,
             )
             region_plans.append(region_render_plan)
         return PageRenderPlan(region_plans=region_plans)
@@ -167,7 +185,13 @@ class FuriganaRenderer:
         draw: ImageDraw.ImageDraw,
         page_render_plan: PageRenderPlan,
     ) -> None:
-        for region_plan in page_render_plan.region_plans:
+        for region_index, region_plan in enumerate(page_render_plan.region_plans):
+            logger.debug(
+                "Painting region {}: draw_commands={}, planned_bounds={}",
+                region_index,
+                len(region_plan.draw_commands),
+                region_plan.planned_bounds,
+            )
             self._erase_background_for_region(
                 draw=draw,
                 line_outline_points=region_plan.line_outline_points,
@@ -183,22 +207,69 @@ class FuriganaRenderer:
         text_region: ExtractedTextRegionDict,
         offsets: dict[int, float],
         vertical_line_index: int,
+        region_index: int,
+        image_size: tuple[int, int],
     ) -> tuple[RegionRenderPlan, int]:
         vertical = bool(text_region.get("is_vertical", False))
         line_texts = text_region.get("line_texts", [])
         line_outline_points = text_region.get("line_outline_points", [])
+        region_detected_bounds = self._compute_outline_list_bounds(line_outline_points)
+        if region_detected_bounds is not None:
+            region_ratio_bounds = self._to_relative_bounds(
+                region_detected_bounds, image_size
+            )
+            logger.debug(
+                "Region {} input geometry: vertical={}, lines={}, detected_bounds_px={}, detected_bounds_ratio={}",
+                region_index,
+                vertical,
+                len(line_texts),
+                region_detected_bounds,
+                region_ratio_bounds,
+            )
+        else:
+            logger.debug(
+                "Region {} input geometry: vertical={}, lines={}, detected_bounds_px=None",
+                region_index,
+                vertical,
+                len(line_texts),
+            )
         font, furigana_font = self._build_region_fonts(
             text_region.get("estimated_font_size", 24)
         )
-        draw_commands, planned_bounds, vertical_line_index = self._plan_region_text_layout(
-            draw=measure_draw,
-            vertical=vertical,
-            line_texts=line_texts,
-            line_outline_points=line_outline_points,
-            font=font,
-            furigana_font=furigana_font,
-            offsets=offsets,
-            vertical_line_index=vertical_line_index,
+        logger.debug(
+            "Region {} font plan: estimated_font_size={}, main_font_size={}, furigana_font_size={}",
+            region_index,
+            text_region.get("estimated_font_size", 24),
+            self._debug_font_size(font),
+            self._debug_font_size(furigana_font),
+        )
+        draw_commands, planned_bounds, vertical_line_index = (
+            self._plan_region_text_layout(
+                draw=measure_draw,
+                vertical=vertical,
+                line_texts=line_texts,
+                line_outline_points=line_outline_points,
+                font=font,
+                furigana_font=furigana_font,
+                offsets=offsets,
+                vertical_line_index=vertical_line_index,
+            )
+        )
+        planned_ratio_bounds = (
+            self._to_relative_bounds(planned_bounds, image_size)
+            if planned_bounds is not None
+            else None
+        )
+        first_command = draw_commands[0] if draw_commands else None
+        logger.debug(
+            "Region {} plan output: commands={}, first_command={}, planned_bounds_px={}, planned_bounds_ratio={}",
+            region_index,
+            len(draw_commands),
+            (first_command.text, first_command.x, first_command.y)
+            if first_command
+            else None,
+            planned_bounds,
+            planned_ratio_bounds,
         )
         return (
             RegionRenderPlan(
@@ -212,9 +283,13 @@ class FuriganaRenderer:
     def _build_region_fonts(
         self, estimated_font_size: int
     ) -> tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
-        main_font_size = max(1, estimated_font_size - self.config.typography.main_font_size_offset)
+        main_font_size = max(
+            1, estimated_font_size - self.config.typography.main_font_size_offset
+        )
         main_font = self._load_japanese_font(main_font_size)
-        furigana_font = self._load_japanese_font(self.config.typography.furigana_font_size)
+        furigana_font = self._load_japanese_font(
+            self.config.typography.furigana_font_size
+        )
         return main_font, furigana_font
 
     def _erase_background_for_region(
@@ -224,7 +299,9 @@ class FuriganaRenderer:
         planned_bounds: Bounds | None,
     ) -> None:
         if self.config.erase.strategy == "planned_text":
-            self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
+            self._erase_planned_text_background(
+                draw=draw, planned_bounds=planned_bounds
+            )
             return
         if self.config.erase.strategy == "detected_region":
             self._erase_detected_region_background(
@@ -259,6 +336,14 @@ class FuriganaRenderer:
             ],
             fill=(255, 255, 255),
         )
+        logger.debug(
+            "Erase detected-region background: bounds_px=({}, {}, {}, {}), padding={}",
+            min(all_xs),
+            min(all_ys),
+            max(all_xs),
+            max(all_ys),
+            self.config.erase.region_padding,
+        )
 
     def _erase_planned_text_background(
         self,
@@ -281,6 +366,11 @@ class FuriganaRenderer:
             ],
             fill=(255, 255, 255),
         )
+        logger.debug(
+            "Erase planned-text background: bounds_px={}, padding={}",
+            planned_bounds,
+            self.config.erase.planned_text_padding,
+        )
 
     def _plan_region_text_layout(
         self,
@@ -295,9 +385,23 @@ class FuriganaRenderer:
     ) -> tuple[list[DrawCommand], Bounds | None, int]:
         draw_commands = []
         planned_bounds: Bounds | None = None
-        for line_text, line_coords in self._safe_zip_region_lines(
-            line_texts=line_texts, line_outline_points=line_outline_points
+        for line_number, (line_text, line_coords) in enumerate(
+            self._safe_zip_region_lines(
+                line_texts=line_texts, line_outline_points=line_outline_points
+            ),
+            start=1,
         ):
+            line_ocr_bounds = self._compute_outline_bounds(line_coords)
+            logger.debug(
+                "Planning line {}: vertical={}, text_len={}, ocr_bounds_px={}",
+                line_number,
+                vertical,
+                len(line_text),
+                line_ocr_bounds,
+            )
+            if line_ocr_bounds is not None:
+                line_ocr_width = line_ocr_bounds[2] - line_ocr_bounds[0]
+                logger.debug("Line {} OCR width={} px", line_number, line_ocr_width)
             logger.debug(f"line_text: {line_text}")
             logger.debug(f"line_coords: {line_coords}")
             bounds = self._measure_line_bounds(line_coords)
@@ -318,6 +422,12 @@ class FuriganaRenderer:
                 )
                 draw_commands.extend(line_commands)
                 planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
+                logger.debug(
+                    "Vertical line planned: shift_dx={}, commands={}, planned_line_bounds_px={}",
+                    line_shift,
+                    len(line_commands),
+                    line_bounds,
+                )
                 vertical_line_index += 1
             else:
                 line_commands, line_bounds = self._plan_horizontal_line_layout(
@@ -329,13 +439,20 @@ class FuriganaRenderer:
                 )
                 draw_commands.extend(line_commands)
                 planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
+                logger.debug(
+                    "Horizontal line planned: commands={}, planned_line_bounds_px={}",
+                    len(line_commands),
+                    line_bounds,
+                )
         return draw_commands, planned_bounds, vertical_line_index
 
     def _paint_planned_region_text(
         self, draw: ImageDraw.ImageDraw, draw_commands: list[DrawCommand]
     ) -> None:
         for command in draw_commands:
-            draw.text((command.x, command.y), command.text, fill=(0, 0, 0), font=command.font)
+            draw.text(
+                (command.x, command.y), command.text, fill=(0, 0, 0), font=command.font
+            )
 
     def _safe_zip_region_lines(
         self, line_texts: list[str], line_outline_points: LineOutlineList
@@ -456,6 +573,39 @@ class FuriganaRenderer:
         command = DrawCommand(text=text, x=x, y=y, font=font)
         return command, draw.textbbox((x, y), text, font=font)
 
+    def _debug_font_size(self, font: ImageFont.ImageFont) -> int | None:
+        return getattr(font, "size", None)
+
+    def _compute_outline_bounds(self, line_coords: LineOutline) -> Bounds | None:
+        if not line_coords:
+            return None
+        xs = [pt[0] for pt in line_coords]
+        ys = [pt[1] for pt in line_coords]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    def _compute_outline_list_bounds(
+        self, line_outline_points: LineOutlineList
+    ) -> Bounds | None:
+        all_points = [pt for line in line_outline_points for pt in line]
+        if not all_points:
+            return None
+        xs = [pt[0] for pt in all_points]
+        ys = [pt[1] for pt in all_points]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    def _to_relative_bounds(
+        self, bounds: Bounds, image_size: tuple[int, int]
+    ) -> tuple[float, float, float, float]:
+        width, height = image_size
+        if width == 0 or height == 0:
+            return (0.0, 0.0, 0.0, 0.0)
+        return (
+            bounds[0] / width,
+            bounds[1] / height,
+            bounds[2] / width,
+            bounds[3] / height,
+        )
+
     def _merge_bounds(
         self, bounds_a: Bounds | None, bounds_b: Bounds | None
     ) -> Bounds | None:
@@ -487,7 +637,9 @@ class FuriganaRenderer:
                 x_min, x_max = min(xs), max(xs)
                 y_min, y_max = min(ys), max(ys)
                 width = x_max - x_min
-                segments = self.furigana_reading_generator.resolve_line_segments(line_text)
+                segments = self.furigana_reading_generator.resolve_line_segments(
+                    line_text
+                )
                 has_furigana_segments = any(
                     segment.needs_furigana for segment in segments
                 )
