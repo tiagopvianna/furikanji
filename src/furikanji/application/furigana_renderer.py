@@ -35,8 +35,20 @@ class LineBounds:
         return self.x_max - self.x_min
 
 
+@dataclass(frozen=True)
+class DrawCommand:
+    text: str
+    x: float
+    y: float
+    font: ImageFont.ImageFont
+
+
 class FuriganaRenderer:
+    ERASE_STRATEGY_PLANNED_TEXT = "planned_text"
+    ERASE_STRATEGY_DETECTED_REGION = "detected_region"
+    ERASE_STRATEGY = ERASE_STRATEGY_PLANNED_TEXT
     REGION_ERASE_PADDING = 10
+    PLANNED_TEXT_ERASE_PADDING = 4
     VERTICAL_PLANNING_FURIGANA_SIZE = 6
     REGION_FURIGANA_FONT_SIZE = 8
     MAIN_FONT_SIZE_OFFSET = 14
@@ -89,10 +101,7 @@ class FuriganaRenderer:
         font, furigana_font = self._build_region_fonts(
             text_region.get("estimated_font_size", 24)
         )
-        self._erase_region_background(
-            draw=context.draw, line_outline_points=line_outline_points
-        )
-        return self._render_region_lines(
+        draw_commands, planned_bounds, vertical_line_index = self._plan_region_text_layout(
             draw=context.draw,
             vertical=vertical,
             line_texts=line_texts,
@@ -104,6 +113,13 @@ class FuriganaRenderer:
             offsets=offsets,
             vertical_line_index=vertical_line_index,
         )
+        self._erase_background_for_region(
+            draw=context.draw,
+            line_outline_points=line_outline_points,
+            planned_bounds=planned_bounds,
+        )
+        self._paint_planned_region_text(draw=context.draw, draw_commands=draw_commands)
+        return vertical_line_index
 
     def _build_region_fonts(self, estimated_font_size):
         main_font_size = max(1, estimated_font_size - self.MAIN_FONT_SIZE_OFFSET)
@@ -111,7 +127,19 @@ class FuriganaRenderer:
         furigana_font = self._load_japanese_font(self.REGION_FURIGANA_FONT_SIZE)
         return main_font, furigana_font
 
-    def _erase_region_background(self, draw, line_outline_points):
+    def _erase_background_for_region(self, draw, line_outline_points, planned_bounds):
+        if self.ERASE_STRATEGY == self.ERASE_STRATEGY_PLANNED_TEXT:
+            self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
+            return
+        if self.ERASE_STRATEGY == self.ERASE_STRATEGY_DETECTED_REGION:
+            self._erase_detected_region_background(
+                draw=draw, line_outline_points=line_outline_points
+            )
+            return
+        logger.warning(f"Unknown erase strategy '{self.ERASE_STRATEGY}', using planned_text")
+        self._erase_planned_text_background(draw=draw, planned_bounds=planned_bounds)
+
+    def _erase_detected_region_background(self, draw, line_outline_points):
         all_points = [pt for line in line_outline_points for pt in line]
         if not all_points:
             return
@@ -131,7 +159,25 @@ class FuriganaRenderer:
             fill=(255, 255, 255),
         )
 
-    def _render_region_lines(
+    def _erase_planned_text_background(self, draw, planned_bounds):
+        if planned_bounds is None:
+            return
+        x0, y0, x1, y1 = planned_bounds
+        draw.rectangle(
+            [
+                (
+                    x0 - self.PLANNED_TEXT_ERASE_PADDING,
+                    y0 - self.PLANNED_TEXT_ERASE_PADDING,
+                ),
+                (
+                    x1 + self.PLANNED_TEXT_ERASE_PADDING,
+                    y1 + self.PLANNED_TEXT_ERASE_PADDING,
+                ),
+            ],
+            fill=(255, 255, 255),
+        )
+
+    def _plan_region_text_layout(
         self,
         draw,
         vertical,
@@ -144,6 +190,8 @@ class FuriganaRenderer:
         offsets,
         vertical_line_index,
     ):
+        draw_commands = []
+        planned_bounds = None
         for line_text, line_coords in self._safe_zip_region_lines(
             line_texts=line_texts, line_outline_points=line_outline_points
         ):
@@ -157,7 +205,7 @@ class FuriganaRenderer:
             )
             if vertical:
                 line_shift = offsets.get(vertical_line_index, 0)
-                self._render_vertical_line_with_furigana(
+                line_commands, line_bounds = self._plan_vertical_line_layout(
                     draw=draw,
                     bounds=bounds,
                     tokens=tokens,
@@ -165,16 +213,24 @@ class FuriganaRenderer:
                     furigana_font=furigana_font,
                     line_shift=line_shift,
                 )
+                draw_commands.extend(line_commands)
+                planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
                 vertical_line_index += 1
             else:
-                self._render_horizontal_line_with_furigana(
+                line_commands, line_bounds = self._plan_horizontal_line_layout(
                     draw=draw,
                     bounds=bounds,
                     tokens=tokens,
                     font=font,
                     furigana_font=furigana_font,
                 )
-        return vertical_line_index
+                draw_commands.extend(line_commands)
+                planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
+        return draw_commands, planned_bounds, vertical_line_index
+
+    def _paint_planned_region_text(self, draw, draw_commands):
+        for command in draw_commands:
+            draw.text((command.x, command.y), command.text, fill=(0, 0, 0), font=command.font)
 
     def _safe_zip_region_lines(self, line_texts, line_outline_points):
         if len(line_texts) != len(line_outline_points):
@@ -212,9 +268,11 @@ class FuriganaRenderer:
     def _classify_token_requires_furigana(self, surface, reading, kanji_regex):
         return bool(kanji_regex.search(surface) and surface != reading)
 
-    def _render_vertical_line_with_furigana(
+    def _plan_vertical_line_layout(
         self, draw, bounds, tokens, font, furigana_font, line_shift
     ):
+        draw_commands = []
+        planned_bounds = None
         x_min_shifted = bounds.x_min + line_shift
         x_max_shifted = bounds.x_max + line_shift
         y_cursor = bounds.y_min
@@ -225,12 +283,15 @@ class FuriganaRenderer:
                 w_char = bbox[2] - bbox[0]
                 h_char = bbox[3] - bbox[1]
                 x_pos = x_min_shifted + (bounds.width - w_char) / 2
-                draw.text(
-                    (x_pos - self.VERTICAL_MAIN_TEXT_X_OFFSET, y_cursor),
-                    char,
-                    fill=(0, 0, 0),
+                command, command_bounds = self._build_draw_command(
+                    draw=draw,
+                    text=char,
+                    x=x_pos - self.VERTICAL_MAIN_TEXT_X_OFFSET,
+                    y=y_cursor,
                     font=font,
                 )
+                draw_commands.append(command)
+                planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
                 y_cursor += h_char + self.VERTICAL_CHAR_SPACING
 
             if token.needs_furigana:
@@ -238,17 +299,23 @@ class FuriganaRenderer:
                 for kana_char in token.reading:
                     bbox_f = draw.textbbox((0, 0), kana_char, font=furigana_font)
                     h_f = bbox_f[3] - bbox_f[1]
-                    draw.text(
-                        (x_max_shifted - self.VERTICAL_FURIGANA_X_OFFSET, y_furi),
-                        kana_char,
-                        fill=(0, 0, 0),
+                    command, command_bounds = self._build_draw_command(
+                        draw=draw,
+                        text=kana_char,
+                        x=x_max_shifted - self.VERTICAL_FURIGANA_X_OFFSET,
+                        y=y_furi,
                         font=furigana_font,
                     )
+                    draw_commands.append(command)
+                    planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
                     y_furi += h_f + self.VERTICAL_FURIGANA_SPACING
+        return draw_commands, planned_bounds
 
-    def _render_horizontal_line_with_furigana(
+    def _plan_horizontal_line_layout(
         self, draw, bounds, tokens, font, furigana_font
     ):
+        draw_commands = []
+        planned_bounds = None
         x_cursor = bounds.x_min
         for token in tokens:
             bbox_word = draw.textbbox((0, 0), token.surface, font=font)
@@ -259,9 +326,42 @@ class FuriganaRenderer:
                 h_ruby = bbox_ruby[3] - bbox_ruby[1]
                 ruby_x = x_cursor + (w_word - w_ruby) / 2
                 ruby_y = bounds.y_min - h_ruby - self.HORIZONTAL_FURIGANA_GAP
-                draw.text((ruby_x, ruby_y), token.reading, fill=(0, 0, 0), font=furigana_font)
-            draw.text((x_cursor, bounds.y_min), token.surface, fill=(0, 0, 0), font=font)
+                command, command_bounds = self._build_draw_command(
+                    draw=draw,
+                    text=token.reading,
+                    x=ruby_x,
+                    y=ruby_y,
+                    font=furigana_font,
+                )
+                draw_commands.append(command)
+                planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
+            command, command_bounds = self._build_draw_command(
+                draw=draw,
+                text=token.surface,
+                x=x_cursor,
+                y=bounds.y_min,
+                font=font,
+            )
+            draw_commands.append(command)
+            planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
             x_cursor += w_word
+        return draw_commands, planned_bounds
+
+    def _build_draw_command(self, draw, text, x, y, font):
+        command = DrawCommand(text=text, x=x, y=y, font=font)
+        return command, draw.textbbox((x, y), text, font=font)
+
+    def _merge_bounds(self, bounds_a, bounds_b):
+        if bounds_a is None:
+            return bounds_b
+        if bounds_b is None:
+            return bounds_a
+        return (
+            min(bounds_a[0], bounds_b[0]),
+            min(bounds_a[1], bounds_b[1]),
+            max(bounds_a[2], bounds_b[2]),
+            max(bounds_a[3], bounds_b[3]),
+        )
 
     def _describe_vertical_line_layout_needs(self, result, tagger, kanji_regex, furigana_size):
         lines_info = []
