@@ -39,6 +39,18 @@ class DrawCommand:
 
 
 @dataclass(frozen=True)
+class RegionRenderPlan:
+    draw_commands: list[DrawCommand]
+    planned_bounds: "Bounds | None"
+    line_outline_points: "LineOutlineList"
+
+
+@dataclass(frozen=True)
+class PageRenderPlan:
+    region_plans: list[RegionRenderPlan]
+
+
+@dataclass(frozen=True)
 class VerticalLineLayoutNeed:
     index: int
     x_min: float
@@ -115,20 +127,11 @@ class FuriganaRenderer:
         overlay_output_path: str,
     ) -> None:
         context = self._initialize_rendering_context(image_path=image_path)
-        offsets = self._plan_vertical_layout_shifts(
-            result=result,
-            furigana_size=self.config.vertical.planning_furigana_size,
-        )
-        vertical_line_index = 0
         logger.debug(result)
-
-        for text_region in result.get("text_regions", []):
-            vertical_line_index = self._render_text_region_overlay(
-                context=context,
-                text_region=text_region,
-                offsets=offsets,
-                vertical_line_index=vertical_line_index,
-            )
+        page_render_plan = self.build_page_render_plan(
+            result=result, measure_draw=context.draw
+        )
+        self.paint_page_render_plan(draw=context.draw, page_render_plan=page_render_plan)
         context.image.save(overlay_output_path)
 
     def _initialize_rendering_context(self, image_path: str) -> RenderingContext:
@@ -138,13 +141,49 @@ class FuriganaRenderer:
             draw=ImageDraw.Draw(image),
         )
 
-    def _render_text_region_overlay(
+    def build_page_render_plan(
         self,
-        context: RenderingContext,
+        result: PageTextExtractionResultDict,
+        measure_draw: ImageDraw.ImageDraw,
+    ) -> PageRenderPlan:
+        offsets = self._plan_vertical_column_shifts_for_furigana(
+            result=result,
+            furigana_size=self.config.vertical.planning_furigana_size,
+        )
+        vertical_line_index = 0
+        region_plans: list[RegionRenderPlan] = []
+        for text_region in result.get("text_regions", []):
+            region_render_plan, vertical_line_index = self._build_region_render_plan(
+                measure_draw=measure_draw,
+                text_region=text_region,
+                offsets=offsets,
+                vertical_line_index=vertical_line_index,
+            )
+            region_plans.append(region_render_plan)
+        return PageRenderPlan(region_plans=region_plans)
+
+    def paint_page_render_plan(
+        self,
+        draw: ImageDraw.ImageDraw,
+        page_render_plan: PageRenderPlan,
+    ) -> None:
+        for region_plan in page_render_plan.region_plans:
+            self._erase_background_for_region(
+                draw=draw,
+                line_outline_points=region_plan.line_outline_points,
+                planned_bounds=region_plan.planned_bounds,
+            )
+            self._paint_planned_region_text(
+                draw=draw, draw_commands=region_plan.draw_commands
+            )
+
+    def _build_region_render_plan(
+        self,
+        measure_draw: ImageDraw.ImageDraw,
         text_region: ExtractedTextRegionDict,
         offsets: dict[int, float],
         vertical_line_index: int,
-    ) -> int:
+    ) -> tuple[RegionRenderPlan, int]:
         vertical = bool(text_region.get("is_vertical", False))
         line_texts = text_region.get("line_texts", [])
         line_outline_points = text_region.get("line_outline_points", [])
@@ -152,7 +191,7 @@ class FuriganaRenderer:
             text_region.get("estimated_font_size", 24)
         )
         draw_commands, planned_bounds, vertical_line_index = self._plan_region_text_layout(
-            draw=context.draw,
+            draw=measure_draw,
             vertical=vertical,
             line_texts=line_texts,
             line_outline_points=line_outline_points,
@@ -161,13 +200,14 @@ class FuriganaRenderer:
             offsets=offsets,
             vertical_line_index=vertical_line_index,
         )
-        self._erase_background_for_region(
-            draw=context.draw,
-            line_outline_points=line_outline_points,
-            planned_bounds=planned_bounds,
+        return (
+            RegionRenderPlan(
+                draw_commands=draw_commands,
+                planned_bounds=planned_bounds,
+                line_outline_points=line_outline_points,
+            ),
+            vertical_line_index,
         )
-        self._paint_planned_region_text(draw=context.draw, draw_commands=draw_commands)
-        return vertical_line_index
 
     def _build_region_fonts(
         self, estimated_font_size: int
@@ -430,7 +470,7 @@ class FuriganaRenderer:
             max(bounds_a[3], bounds_b[3]),
         )
 
-    def _describe_vertical_line_layout_needs(
+    def _describe_vertical_columns_furigana_space_needs(
         self, result: PageTextExtractionResultDict, furigana_size: int
     ) -> list[VerticalLineLayoutNeed]:
         lines_info: list[VerticalLineLayoutNeed] = []
@@ -470,7 +510,7 @@ class FuriganaRenderer:
                 counter += 1
         return lines_info
 
-    def _cluster_colliding_vertical_columns(
+    def _cluster_colliding_vertical_columns_for_furigana(
         self,
         lines_info: list[VerticalLineLayoutNeed],
         x_thresh: int | None = None,
@@ -505,7 +545,7 @@ class FuriganaRenderer:
                 groups.append([line])
         return groups
 
-    def _resolve_column_shift_by_cluster(
+    def _resolve_vertical_column_shift_by_cluster(
         self, groups: list[list[VerticalLineLayoutNeed]]
     ) -> dict[int, float]:
         offsets: dict[int, float] = {}
@@ -525,9 +565,11 @@ class FuriganaRenderer:
                 offsets[line.index] = dx
         return offsets
 
-    def _plan_vertical_layout_shifts(
+    def _plan_vertical_column_shifts_for_furigana(
         self, result: PageTextExtractionResultDict, furigana_size: int
     ) -> dict[int, float]:
-        lines_info = self._describe_vertical_line_layout_needs(result, furigana_size)
-        groups = self._cluster_colliding_vertical_columns(lines_info)
-        return self._resolve_column_shift_by_cluster(groups)
+        lines_info = self._describe_vertical_columns_furigana_space_needs(
+            result, furigana_size
+        )
+        groups = self._cluster_colliding_vertical_columns_for_furigana(lines_info)
+        return self._resolve_vertical_column_shift_by_cluster(groups)
