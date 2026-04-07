@@ -21,3 +21,12 @@ __all__ = [
     "TextLocalizerAdapter",
     "TextTranscriberAdapter",
 ]
+
+try:
+    from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+        SudachiFuriganaReadingGenerator,
+    )
+
+    __all__.append("SudachiFuriganaReadingGenerator")
+except Exception:
+    pass

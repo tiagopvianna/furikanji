@@ -1,7 +1,9 @@
 import fire
 import numpy as np
 
-from src.furikanji.adapters.comic_text_detector_localizer import ComicTextDetectorLocalizer
+from src.furikanji.adapters.comic_text_detector_localizer import (
+    ComicTextDetectorLocalizer,
+)
 from src.furikanji.adapters.fugashi_furigana_reading_generator import (
     FugashiFuriganaReadingGenerator,
 )
@@ -29,6 +31,19 @@ class _NoopTextTranscriber:
         return ""
 
 
+def _build_furigana_reading_generator(reading_backend: str):
+    normalized_backend = reading_backend.lower()
+    if normalized_backend == "fugashi":
+        return FugashiFuriganaReadingGenerator()
+    if normalized_backend == "sudachi":
+        from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+            SudachiFuriganaReadingGenerator,
+        )
+
+        return SudachiFuriganaReadingGenerator()
+    raise ValueError("reading_backend must be one of: fugashi, sudachi")
+
+
 def process_single_image(
     image_path: str,
     output_path: str = "output.png",
@@ -36,6 +51,7 @@ def process_single_image(
     device: str = "cpu",
     force_cpu: bool = False,
     pretrained_model_name_or_path: str = "kha-white/manga-ocr-base",
+    reading_backend: str = "fugashi",
     disable_ocr: bool = False,
     draw_target_boxes: bool = False,
     draw_overlay_text: bool = True,
@@ -69,7 +85,7 @@ def process_single_image(
         disable_ocr=disable_ocr,
         **extractor_kwargs,
     )
-    furigana_reading_generator = FugashiFuriganaReadingGenerator()
+    furigana_reading_generator = _build_furigana_reading_generator(reading_backend)
     furigana_renderer = FuriganaRenderer(
         furigana_reading_generator=furigana_reading_generator,
         config=FuriganaRenderConfig(
