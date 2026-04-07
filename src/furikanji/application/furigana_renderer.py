@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from statistics import median
 from pathlib import Path
+from statistics import median
 from typing import Iterable
 
 from loguru import logger
@@ -81,6 +81,7 @@ class EraseConfig:
 class VerticalLayoutConfig:
     main_text_x_offset: int = 10
     furigana_x_offset: int = 10
+    furigana_y_offset: int = 5
     required_space_padding: int = 2
     collision_x_threshold: int = 12
     collision_y_overlap_min: int = 1
@@ -97,7 +98,7 @@ class SizingConfig:
     min_main_size: int = 8
     max_main_size: int = 120
     main_scale_bias: float = 1.0
-    furigana_ratio: float = 0.5
+    furigana_ratio: float = 0.45
     min_furigana_size: int = 6
     max_furigana_size: int = 72
     char_spacing_ratio: float = 0.25
@@ -202,7 +203,9 @@ class FuriganaRenderer:
             vertical = bool(text_region.get("is_vertical", False))
             line_target_widths = text_region.get("line_target_widths", [])
             line_target_heights = text_region.get("line_target_heights", [])
-            for index, line_coords in enumerate(text_region.get("line_outline_points", [])):
+            for index, line_coords in enumerate(
+                text_region.get("line_outline_points", [])
+            ):
                 bounds = self._compute_outline_bounds(line_coords)
                 if bounds is None:
                     continue
@@ -212,13 +215,19 @@ class FuriganaRenderer:
                     bbox_width = bounds[2] - bounds[0]
                     bbox_height = bounds[3] - bounds[1]
                     mask_target_dimension = (
-                        line_target_widths[index]
-                        if vertical
-                        else line_target_heights[index]
-                    ) if index < len(line_target_widths if vertical else line_target_heights) else None
+                        (
+                            line_target_widths[index]
+                            if vertical
+                            else line_target_heights[index]
+                        )
+                        if index
+                        < len(line_target_widths if vertical else line_target_heights)
+                        else None
+                    )
                     selected_target_dimension = (
                         float(mask_target_dimension)
-                        if mask_target_dimension is not None and mask_target_dimension > 0
+                        if mask_target_dimension is not None
+                        and mask_target_dimension > 0
                         else (bbox_width if vertical else bbox_height)
                     )
                     x_center = (bounds[0] + bounds[2]) / 2
@@ -409,12 +418,18 @@ class FuriganaRenderer:
         image_size: tuple[int, int],
     ) -> tuple[list[DrawCommand], Bounds | None, float, float, dict[str, bool]]:
         if intrinsic_bounds is None:
-            return draw_commands, None, 0.0, 0.0, {
-                "overflow_left": False,
-                "overflow_top": False,
-                "overflow_right": False,
-                "overflow_bottom": False,
-            }
+            return (
+                draw_commands,
+                None,
+                0.0,
+                0.0,
+                {
+                    "overflow_left": False,
+                    "overflow_top": False,
+                    "overflow_right": False,
+                    "overflow_bottom": False,
+                },
+            )
         target_bounds = (
             region_detected_bounds
             if region_detected_bounds is not None
@@ -425,12 +440,18 @@ class FuriganaRenderer:
             )
         )
         if target_bounds is None:
-            return draw_commands, intrinsic_bounds, 0.0, 0.0, {
-                "overflow_left": False,
-                "overflow_top": False,
-                "overflow_right": False,
-                "overflow_bottom": False,
-            }
+            return (
+                draw_commands,
+                intrinsic_bounds,
+                0.0,
+                0.0,
+                {
+                    "overflow_left": False,
+                    "overflow_top": False,
+                    "overflow_right": False,
+                    "overflow_bottom": False,
+                },
+            )
 
         policy = self.config.placement.policy
         if policy == "top_left":
@@ -455,12 +476,18 @@ class FuriganaRenderer:
             bounds=intrinsic_bounds, dx=base_dx, dy=base_dy
         )
         if placed_bounds is None:
-            return draw_commands, intrinsic_bounds, 0.0, 0.0, {
-                "overflow_left": False,
-                "overflow_top": False,
-                "overflow_right": False,
-                "overflow_bottom": False,
-            }
+            return (
+                draw_commands,
+                intrinsic_bounds,
+                0.0,
+                0.0,
+                {
+                    "overflow_left": False,
+                    "overflow_top": False,
+                    "overflow_right": False,
+                    "overflow_bottom": False,
+                },
+            )
 
         if policy == "overflow_aware":
             shift_x, shift_y = self._compute_overflow_correction_shift(
@@ -726,7 +753,7 @@ class FuriganaRenderer:
                 y_cursor += h_char + char_spacing
 
             if segment.needs_furigana:
-                y_furi = y_segment_start
+                y_furi = y_segment_start + self.config.vertical.furigana_y_offset
                 for kana_char in segment.reading:
                     bbox_f = draw.textbbox((0, 0), kana_char, font=furigana_font)
                     h_f = bbox_f[3] - bbox_f[1]
@@ -1083,10 +1110,10 @@ class FuriganaRenderer:
                 else line_bounds[3] - line_bounds[1]
             )
             mask_target_dimension = (
-                line_target_widths[index]
-                if vertical
-                else line_target_heights[index]
-            ) if index < len(line_target_widths if vertical else line_target_heights) else None
+                (line_target_widths[index] if vertical else line_target_heights[index])
+                if index < len(line_target_widths if vertical else line_target_heights)
+                else None
+            )
             target_dimension = (
                 float(mask_target_dimension)
                 if mask_target_dimension is not None and mask_target_dimension > 0
@@ -1129,7 +1156,9 @@ class FuriganaRenderer:
             )
             logger.debug(
                 "Region sizing fallback used: estimated_font_size={}, resolved_main_size={}",
-                text_region.get("estimated_font_size", self.config.sizing.default_main_size),
+                text_region.get(
+                    "estimated_font_size", self.config.sizing.default_main_size
+                ),
                 main_size,
             )
 
@@ -1179,7 +1208,8 @@ class FuriganaRenderer:
             return None
 
         guessed_raw = round(
-            (target_dimension / probe_dimension_at_1) * self.config.sizing.main_scale_bias
+            (target_dimension / probe_dimension_at_1)
+            * self.config.sizing.main_scale_bias
         )
         guessed = self._clamp_main_size(guessed_raw)
         if not self.config.sizing.enable_one_step_correction:
@@ -1235,12 +1265,17 @@ class FuriganaRenderer:
 
     def _resolve_main_size_fallback(self, estimated_font_size: int) -> int:
         if self.config.sizing.use_ocr_estimate_fallback:
-            scaled = round(estimated_font_size * self.config.sizing.ocr_fallback_main_scale)
+            scaled = round(
+                estimated_font_size * self.config.sizing.ocr_fallback_main_scale
+            )
             return self._clamp_main_size(scaled)
         return self._clamp_main_size(self.config.sizing.default_main_size)
 
     def _clamp_main_size(self, size: int) -> int:
-        return max(self.config.sizing.min_main_size, min(self.config.sizing.max_main_size, size))
+        return max(
+            self.config.sizing.min_main_size,
+            min(self.config.sizing.max_main_size, size),
+        )
 
     def _compute_effective_target_dimension(
         self, target_dimension: float, vertical: bool
