@@ -51,7 +51,7 @@ def process_single_image(
     device: str = "cpu",
     force_cpu: bool = False,
     pretrained_model_name_or_path: str = "kha-white/manga-ocr-base",
-    reading_backend: str = "fugashi",
+    reading_backend: str = "sudachi",
     disable_ocr: bool = False,
     draw_target_boxes: bool = False,
     draw_overlay_text: bool = True,
