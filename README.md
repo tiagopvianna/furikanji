@@ -23,19 +23,20 @@ Adds furigana to kanji in images.
    pip install -e .
    ```
 
-3. **Choose dictionary mode (recommended):**
-   - Small install (default quality, fastest setup):
+3. **Install Sudachi (default backend):**
+   ```bash
+   pip install -e ".[sudachi]"
+   ```
+
+4. **Optional Fugashi dictionaries (fallback/experimentation):**
+   - Small install:
    ```bash
    pip install -e ".[unidic-lite]"
    ```
-   - Better reading quality (large one-time download, kept outside this repo):
+   - Better UniDic quality (large one-time download, kept outside this repo):
    ```bash
    pip install -e ".[unidic]"
    python -m unidic download
-   ```
-   - Sudachi backend (alternative tokenizer + core dictionary):
-   ```bash
-   pip install -e ".[sudachi]"
    ```
    The UniDic download is stored in your Python environment/cache, not in this git repository.
 
