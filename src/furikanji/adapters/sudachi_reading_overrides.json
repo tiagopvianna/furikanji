@@ -1,0 +1,15 @@
+{
+  "rules": [
+    {
+      "kanji": "私",
+      "reading": "わたし",
+      "priority": 100,
+      "pos_contains": ["代名詞"],
+      "pos_prefix": [],
+      "next_surfaces": [],
+      "prev_surfaces": [],
+      "exception_prefixes": [],
+      "exception_suffixes": []
+    }
+  ]
+}

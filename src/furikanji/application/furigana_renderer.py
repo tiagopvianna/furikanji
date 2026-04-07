@@ -81,7 +81,7 @@ class EraseConfig:
 class VerticalLayoutConfig:
     main_text_x_offset: int = 10
     furigana_x_offset: int = 10
-    furigana_y_offset: int = 5
+    furigana_y_offset: int = 3
     required_space_padding: int = 2
     collision_x_threshold: int = 12
     collision_y_overlap_min: int = 1
@@ -98,7 +98,7 @@ class SizingConfig:
     min_main_size: int = 8
     max_main_size: int = 120
     main_scale_bias: float = 1.0
-    furigana_ratio: float = 0.45
+    furigana_ratio: float = 0.5
     min_furigana_size: int = 6
     max_furigana_size: int = 72
     char_spacing_ratio: float = 0.25

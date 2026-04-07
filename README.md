@@ -8,7 +8,7 @@ Adds furigana to kanji in images.
 
 **Output Image:**
 
-![Output](example/result_overlay.jpg)
+![Output](example/output.png)
 
 ## Setup
 
@@ -42,11 +42,48 @@ Adds furigana to kanji in images.
 ## Usage
 
 ```bash
-python -m src.furikanji.main <image_path> --output_path <output_path>
+python -m src.furikanji.main ./example/full_page.jpg --output_path full_page_output.png --draw_target_boxes False --draw_overlay_text True --reading_backend sudachi
 ```
 
-Reading backend selection:
+Reading backend:
+- `sudachi` is the default and recommended backend.
+- You can still select Fugashi explicitly when needed.
+
+Fugashi example:
 ```bash
 python -m src.furikanji.main <image_path> --reading_backend fugashi --output_path <output_path>
-python -m src.furikanji.main <image_path> --reading_backend sudachi --output_path <output_path>
+```
+
+## Sudachi Reading Overrides
+
+Sudachi overrides are defined in:
+
+`src/furikanji/adapters/sudachi_reading_overrides.json`
+
+Each rule can override a token reading with optional context constraints:
+
+- `kanji`: token surface to match
+- `reading`: replacement reading (hiragana recommended)
+- `pos_contains`: optional substring match on Sudachi POS fields
+- `next_surfaces`: optional allow-list for next token surface
+- `prev_surfaces`: optional allow-list for previous token surface
+- `exception_prefixes`: skip rule when left context ends with any value
+- `exception_suffixes`: skip rule when right context starts with any value
+
+Example:
+
+```json
+{
+  "rules": [
+    {
+      "kanji": "私",
+      "reading": "わたし",
+      "pos_contains": ["代名詞"],
+      "next_surfaces": [],
+      "prev_surfaces": [],
+      "exception_prefixes": [],
+      "exception_suffixes": []
+    }
+  ]
+}
 ```
