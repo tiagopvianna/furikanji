@@ -174,17 +174,26 @@ class FuriganaRenderer:
             image_height,
             len(result.get("text_regions", [])),
         )
-        logger.debug(result)
         page_render_plan = self.build_page_render_plan(
             result=result,
             measure_draw=context.draw,
             image_size=(image_width, image_height),
+        )
+        total_commands = sum(
+            len(region_plan.draw_commands)
+            for region_plan in page_render_plan.region_plans
         )
         if self.config.draw_overlay_text:
             self.paint_page_render_plan(
                 draw=context.draw, page_render_plan=page_render_plan
             )
         context.image.save(overlay_output_path)
+        logger.info(
+            "Finished furigana render pass: regions={}, draw_commands={}, output={}",
+            len(page_render_plan.region_plans),
+            total_commands,
+            overlay_output_path,
+        )
 
     def _draw_line_target_boxes(
         self, draw: ImageDraw.ImageDraw, result: PageTextExtractionResultDict
@@ -256,7 +265,7 @@ class FuriganaRenderer:
             result=result,
             region_sizings=resolved_region_sizings,
         )
-        logger.debug("Vertical column shifts for furigana: {}", offsets)
+        logger.trace("Vertical column shifts for furigana: {}", offsets)
         vertical_line_index = 0
         region_plans: list[RegionRenderPlan] = []
         for region_index, text_region in enumerate(result.get("text_regions", [])):
@@ -278,7 +287,7 @@ class FuriganaRenderer:
         page_render_plan: PageRenderPlan,
     ) -> None:
         for region_index, region_plan in enumerate(page_render_plan.region_plans):
-            logger.debug(
+            logger.trace(
                 "Painting region {}: draw_commands={}, planned_bounds={}",
                 region_index,
                 len(region_plan.draw_commands),
@@ -311,7 +320,7 @@ class FuriganaRenderer:
             region_ratio_bounds = self._to_relative_bounds(
                 region_detected_bounds, image_size
             )
-            logger.debug(
+            logger.trace(
                 "Region {} input geometry: vertical={}, lines={}, detected_bounds_px={}, detected_bounds_ratio={}",
                 region_index,
                 vertical,
@@ -320,7 +329,7 @@ class FuriganaRenderer:
                 region_ratio_bounds,
             )
         else:
-            logger.debug(
+            logger.trace(
                 "Region {} input geometry: vertical={}, lines={}, detected_bounds_px=None",
                 region_index,
                 vertical,
@@ -337,7 +346,7 @@ class FuriganaRenderer:
             region_origin = (0.0, 0.0)
             intrinsic_line_outline_points = line_outline_points
         font, furigana_font = self._build_region_fonts(region_sizing=region_sizing)
-        logger.debug(
+        logger.trace(
             "Region {} font plan: estimated_font_size={}, main_font_size={}, furigana_font_size={}, char_spacing={}, furigana_spacing={}",
             region_index,
             text_region.get("estimated_font_size", 24),
@@ -373,19 +382,14 @@ class FuriganaRenderer:
             if planned_bounds is not None
             else None
         )
-        first_command = draw_commands[0] if draw_commands else None
         logger.debug(
-            "Region {} plan output: commands={}, first_command={}, planned_bounds_px={}, planned_bounds_ratio={}, placement_dx={}, placement_dy={}, overflow_flags={}",
+            "Region {} plan output: commands={}, planned_bounds_px={}, planned_bounds_ratio={}, placement_dx={}, placement_dy={}",
             region_index,
             len(draw_commands),
-            (first_command.text, first_command.x, first_command.y)
-            if first_command
-            else None,
             planned_bounds,
             planned_ratio_bounds,
             placement_dx,
             placement_dy,
-            overflow_flags,
         )
         return (
             RegionRenderPlan(
@@ -478,12 +482,10 @@ class FuriganaRenderer:
             image_size=image_size,
             margin=self.config.placement.min_margin,
         )
-        logger.debug(
-            "Region placement: policy={}, anchor={}, target_bounds={}, intrinsic_bounds={}, base_shift=({}, {}), overflow_correction=({}, {}), final_bounds={}, overflow_flags={}",
+        logger.trace(
+            "Region placement: policy={}, anchor={}, base_shift=({}, {}), overflow_correction=({}, {}), final_bounds={}, overflow_flags={}",
             policy,
             self.config.placement.overflow_aware_anchor,
-            target_bounds,
-            intrinsic_bounds,
             base_dx,
             base_dy,
             shift_x,
@@ -552,7 +554,7 @@ class FuriganaRenderer:
             ],
             fill=(255, 255, 255),
         )
-        logger.debug(
+        logger.trace(
             "Erase detected-region background: bounds_px=({}, {}, {}, {}), padding={}",
             min(all_xs),
             min(all_ys),
@@ -582,7 +584,7 @@ class FuriganaRenderer:
             ],
             fill=(255, 255, 255),
         )
-        logger.debug(
+        logger.trace(
             "Erase planned-text background: bounds_px={}, padding={}",
             planned_bounds,
             self.config.erase.planned_text_padding,
@@ -609,7 +611,7 @@ class FuriganaRenderer:
             start=1,
         ):
             line_ocr_bounds = self._compute_outline_bounds(line_coords)
-            logger.debug(
+            logger.trace(
                 "Planning line {}: vertical={}, text_len={}, ocr_bounds_px={}",
                 line_number,
                 vertical,
@@ -618,9 +620,7 @@ class FuriganaRenderer:
             )
             if line_ocr_bounds is not None:
                 line_ocr_width = line_ocr_bounds[2] - line_ocr_bounds[0]
-                logger.debug("Line {} OCR width={} px", line_number, line_ocr_width)
-            logger.debug(f"line_text: {line_text}")
-            logger.debug(f"line_coords: {line_coords}")
+                logger.trace("Line {} OCR width={} px", line_number, line_ocr_width)
             bounds = self._measure_line_bounds(line_coords)
             if bounds is None:
                 continue
@@ -641,7 +641,7 @@ class FuriganaRenderer:
                 )
                 draw_commands.extend(line_commands)
                 planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
-                logger.debug(
+                logger.trace(
                     "Vertical line planned: shift_dx={}, commands={}, planned_line_bounds_px={}",
                     line_shift,
                     len(line_commands),
@@ -658,7 +658,7 @@ class FuriganaRenderer:
                 )
                 draw_commands.extend(line_commands)
                 planned_bounds = self._merge_bounds(planned_bounds, line_bounds)
-                logger.debug(
+                logger.trace(
                     "Horizontal line planned: commands={}, planned_line_bounds_px={}",
                     len(line_commands),
                     line_bounds,
@@ -1092,7 +1092,7 @@ class FuriganaRenderer:
                 if mask_target_dimension is not None and mask_target_dimension > 0
                 else bbox_target_dimension
             )
-            logger.debug(
+            logger.trace(
                 "Line target source: vertical={}, line_index={}, mask_target={}, bbox_target={}, selected_target={}",
                 vertical,
                 index,
@@ -1116,8 +1116,8 @@ class FuriganaRenderer:
             raw_main_size = round(median(line_guesses))
             main_size = self._clamp_main_size(raw_main_size)
             logger.debug(
-                "Region dynamic sizing: line_guesses={}, median={}, clamped={}",
-                line_guesses,
+                "Region dynamic sizing: line_count={}, median={}, clamped={}",
+                len(line_guesses),
                 raw_main_size,
                 main_size,
             )
@@ -1159,7 +1159,7 @@ class FuriganaRenderer:
         self, draw: ImageDraw.ImageDraw, target_dimension: float, vertical: bool
     ) -> int | None:
         if target_dimension < self.config.sizing.min_target_dimension:
-            logger.debug(
+            logger.trace(
                 "Sizing micro-check skipped: target_dimension={} below min_target_dimension={}",
                 target_dimension,
                 self.config.sizing.min_target_dimension,
@@ -1171,7 +1171,7 @@ class FuriganaRenderer:
             vertical=vertical,
         )
         if probe_dimension_at_1 <= 0:
-            logger.debug(
+            logger.trace(
                 "Sizing micro-check failed: probe_dimension_at_1={} for vertical={}",
                 probe_dimension_at_1,
                 vertical,
@@ -1183,7 +1183,7 @@ class FuriganaRenderer:
         )
         guessed = self._clamp_main_size(guessed_raw)
         if not self.config.sizing.enable_one_step_correction:
-            logger.debug(
+            logger.trace(
                 "Sizing micro-check: vertical={}, target={}, probe_at_1={}, s0_raw={}, s0_clamped={}, correction=disabled, final={}",
                 vertical,
                 target_dimension,
@@ -1198,7 +1198,7 @@ class FuriganaRenderer:
             draw=draw, font_size=guessed, vertical=vertical
         )
         if measured <= 0:
-            logger.debug(
+            logger.trace(
                 "Sizing micro-check: vertical={}, target={}, probe_at_1={}, s0_raw={}, s0_clamped={}, measured_at_s0={}, correction=skipped, final={}",
                 vertical,
                 target_dimension,
@@ -1211,7 +1211,7 @@ class FuriganaRenderer:
             return guessed
         corrected_raw = round(guessed * (target_dimension / measured))
         corrected = self._clamp_main_size(corrected_raw)
-        logger.debug(
+        logger.trace(
             "Sizing micro-check: vertical={}, target={}, probe_at_1={}, s0_raw={}, s0_clamped={}, measured_at_s0={}, s1_raw={}, final={}",
             vertical,
             target_dimension,
@@ -1252,7 +1252,7 @@ class FuriganaRenderer:
         )
         ratio = max(0.1, min(1.0, ratio))
         effective = target_dimension * ratio
-        logger.debug(
+        logger.trace(
             "Sizing target adjustment: vertical={}, target_raw={}, target_inner_ratio={}, target_effective={}",
             vertical,
             target_dimension,
