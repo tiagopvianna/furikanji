@@ -55,6 +55,16 @@ Fugashi example:
 python -m src.furikanji.main <image_path> --reading_backend fugashi --output_path <output_path>
 ```
 
+## Vertical Ruby Fit
+
+Vertical rendering now constrains each furigana token to its own base-token span budget.
+
+Relevant `FuriganaRenderConfig.vertical` options:
+- `ruby_fit_policy`: currently `"shrink_then_skip"` (default)
+- `ruby_min_size`: minimum per-token ruby font size during fit
+- `ruby_min_spacing`: minimum per-token ruby spacing during fit
+- `ruby_align`: `"top"` (default) or `"center"`
+
 ## Sudachi Reading Overrides
 
 Sudachi overrides are defined in:

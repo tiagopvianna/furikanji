@@ -81,10 +81,14 @@ class EraseConfig:
 class VerticalLayoutConfig:
     main_text_x_offset: int = 10
     furigana_x_offset: int = 10
-    furigana_y_offset: int = 3
+    furigana_y_offset: int = 0
     required_space_padding: int = 2
     collision_x_threshold: int = 12
     collision_y_overlap_min: int = 1
+    ruby_fit_policy: str = "shrink_then_skip"
+    ruby_min_size: int = 6
+    ruby_min_spacing: int = 1
+    ruby_align: str = "top"
 
 
 @dataclass(frozen=True)
@@ -151,6 +155,11 @@ class FuriganaRenderer:
     ) -> None:
         self.furigana_reading_generator = furigana_reading_generator
         self.config = config or FuriganaRenderConfig()
+        self._ruby_fit_stats = {
+            "fitted": 0,
+            "shrunk": 0,
+            "skipped": 0,
+        }
 
     def _load_japanese_font(self, size: int) -> ImageFont.ImageFont:
         font_path = Path(__file__).parent.parent / "fonts" / "NotoSansCJKjp-Regular.otf"
@@ -165,6 +174,7 @@ class FuriganaRenderer:
         result: PageTextExtractionResultDict,
         overlay_output_path: str,
     ) -> None:
+        self._reset_ruby_fit_stats()
         context = self._initialize_rendering_context(image_path=image_path)
         if self.config.draw_target_boxes:
             self._draw_line_target_boxes(draw=context.draw, result=result)
@@ -184,6 +194,12 @@ class FuriganaRenderer:
             len(region_plan.draw_commands)
             for region_plan in page_render_plan.region_plans
         )
+        logger.info(
+            "Vertical ruby fit summary: fitted={}, shrunk={}, skipped={}",
+            self._ruby_fit_stats["fitted"],
+            self._ruby_fit_stats["shrunk"],
+            self._ruby_fit_stats["skipped"],
+        )
         if self.config.draw_overlay_text:
             self.paint_page_render_plan(
                 draw=context.draw, page_render_plan=page_render_plan
@@ -195,6 +211,13 @@ class FuriganaRenderer:
             total_commands,
             overlay_output_path,
         )
+
+    def _reset_ruby_fit_stats(self) -> None:
+        self._ruby_fit_stats = {
+            "fitted": 0,
+            "shrunk": 0,
+            "skipped": 0,
+        }
 
     def _draw_line_target_boxes(
         self, draw: ImageDraw.ImageDraw, result: PageTextExtractionResultDict
@@ -662,6 +685,7 @@ class FuriganaRenderer:
                     segments=segments,
                     font=font,
                     furigana_font=furigana_font,
+                    furigana_size=region_sizing.furigana_size,
                     line_shift=line_shift,
                     char_spacing=region_sizing.char_spacing,
                     furigana_spacing=region_sizing.furigana_spacing,
@@ -725,6 +749,7 @@ class FuriganaRenderer:
         segments: list[FuriganaSegment],
         font: ImageFont.ImageFont,
         furigana_font: ImageFont.ImageFont,
+        furigana_size: int,
         line_shift: float,
         char_spacing: int,
         furigana_spacing: int,
@@ -753,21 +778,115 @@ class FuriganaRenderer:
                 y_cursor += h_char + char_spacing
 
             if segment.needs_furigana:
-                y_furi = y_segment_start + self.config.vertical.furigana_y_offset
+                fit_result = self._fit_vertical_ruby_within_budget(
+                    draw=draw,
+                    reading=segment.reading,
+                    furigana_font=furigana_font,
+                    furigana_size=furigana_size,
+                    furigana_spacing=furigana_spacing,
+                    segment_top=y_segment_start,
+                    segment_bottom=y_cursor,
+                )
+                if fit_result is None:
+                    continue
+                fitted_font, fitted_spacing, y_furi = fit_result
                 for kana_char in segment.reading:
-                    bbox_f = draw.textbbox((0, 0), kana_char, font=furigana_font)
+                    bbox_f = draw.textbbox((0, 0), kana_char, font=fitted_font)
                     h_f = bbox_f[3] - bbox_f[1]
                     command, command_bounds = self._build_draw_command(
                         draw=draw,
                         text=kana_char,
                         x=x_max_shifted - self.config.vertical.furigana_x_offset,
                         y=y_furi,
-                        font=furigana_font,
+                        font=fitted_font,
                     )
                     draw_commands.append(command)
                     planned_bounds = self._merge_bounds(planned_bounds, command_bounds)
-                    y_furi += h_f + furigana_spacing
+                    y_furi += h_f + fitted_spacing
         return draw_commands, planned_bounds
+
+    def _fit_vertical_ruby_within_budget(
+        self,
+        draw: ImageDraw.ImageDraw,
+        reading: str,
+        furigana_font: ImageFont.ImageFont,
+        furigana_size: int,
+        furigana_spacing: int,
+        segment_top: float,
+        segment_bottom: float,
+    ) -> tuple[ImageFont.ImageFont, int, float] | None:
+        if not reading:
+            return None
+        budget_start = segment_top + self.config.vertical.furigana_y_offset
+        budget_end = segment_bottom
+        budget_height = max(0.0, budget_end - budget_start)
+        if budget_height <= 0:
+            return None
+
+        min_size = min(furigana_size, max(1, self.config.vertical.ruby_min_size))
+        min_spacing = min(
+            furigana_spacing, max(0, self.config.vertical.ruby_min_spacing)
+        )
+
+        if self.config.vertical.ruby_fit_policy != "shrink_then_skip":
+            logger.warning(
+                "Unknown vertical ruby_fit_policy '{}'; using shrink_then_skip",
+                self.config.vertical.ruby_fit_policy,
+            )
+
+        size_candidates = [furigana_size]
+        for size in range(furigana_size - 1, min_size - 1, -1):
+            size_candidates.append(size)
+        spacing_candidates_by_size: dict[int, list[int]] = {}
+        for size in size_candidates:
+            if size == min_size:
+                spacing_candidates_by_size[size] = list(
+                    range(furigana_spacing, min_spacing - 1, -1)
+                )
+            else:
+                spacing_candidates_by_size[size] = [furigana_spacing]
+
+        for size in size_candidates:
+            font = (
+                furigana_font
+                if size == furigana_size
+                else self._load_japanese_font(size)
+            )
+            for spacing in spacing_candidates_by_size[size]:
+                ruby_height = self._measure_vertical_ruby_height(
+                    draw=draw,
+                    text=reading,
+                    font=font,
+                    spacing=spacing,
+                )
+                if ruby_height > budget_height:
+                    continue
+                if self.config.vertical.ruby_align == "center":
+                    y_start = budget_start + (budget_height - ruby_height) / 2
+                else:
+                    y_start = budget_start
+                if size == furigana_size and spacing == furigana_spacing:
+                    self._ruby_fit_stats["fitted"] += 1
+                else:
+                    self._ruby_fit_stats["shrunk"] += 1
+                return font, spacing, y_start
+        self._ruby_fit_stats["skipped"] += 1
+        return None
+
+    def _measure_vertical_ruby_height(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.ImageFont,
+        spacing: int,
+    ) -> float:
+        total_height = 0.0
+        for index, char in enumerate(text):
+            bbox = draw.textbbox((0, 0), char, font=font)
+            total_height += bbox[3] - bbox[1]
+            if index + 1 < len(text):
+                total_height += spacing
+        return total_height
 
     def _plan_horizontal_line_layout(
         self,
