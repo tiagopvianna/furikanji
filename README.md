@@ -2,13 +2,25 @@
 
 Adds furigana to kanji in images.
 
-**Input Image:**
+## Examples
 
-![Input](example/sample.png)
+### sample.png -> sample_result.png
 
-**Output Image:**
+| Input | Output |
+|---|---|
+| ![sample input](example/sample.png) | ![sample output](example/sample_result.png) |
 
-![Output](example/output.png)
+### sample_2.png -> sample_2_result.png
+
+| Input | Output |
+|---|---|
+| ![sample 2 input](example/sample_2.png) | ![sample 2 output](example/sample_2_result.png) |
+
+### full_page.jpg -> full_page_result.png
+
+| Input | Output |
+|---|---|
+| ![full page input](example/full_page.jpg) | ![full page output](example/full_page_result.png) |
 
 ## Setup
 
@@ -43,7 +55,7 @@ Adds furigana to kanji in images.
 ## Usage
 
 ```bash
-python -m src.furikanji.main ./example/full_page.jpg --output_path full_page_output.png --draw_target_boxes False --draw_overlay_text True --reading_backend sudachi
+python -m src.furikanji.main ./example/full_page.jpg --output_path ./example/full_page_result.png --draw_target_boxes False --draw_overlay_text True --reading_backend sudachi
 ```
 
 Reading backend:
