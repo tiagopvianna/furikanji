@@ -1,6 +1,6 @@
 # Furikanji
 
-Adds furigana to kanji in images.
+Adds furigana (readings) to kanji in images.
 
 ## Examples
 
