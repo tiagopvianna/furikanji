@@ -35,37 +35,14 @@ Adds furigana to kanji in images.
    pip install -e .
    ```
 
-3. **Install Sudachi (default backend):**
-   ```bash
-   pip install -e ".[sudachi]"
-   ```
-
-4. **Optional Fugashi dictionaries (fallback/experimentation):**
-   - Small install:
-   ```bash
-   pip install -e ".[unidic-lite]"
-   ```
-   - Better UniDic quality (large one-time download, kept outside this repo):
-   ```bash
-   pip install -e ".[unidic]"
-   python -m unidic download
-   ```
-   The UniDic download is stored in your Python environment/cache, not in this git repository.
-
 ## Usage
 
 ```bash
-python -m src.furikanji.main ./example/full_page.jpg --output_path ./example/full_page_result.png --draw_target_boxes False --draw_overlay_text True --reading_backend sudachi
+python -m src.furikanji.main ./example/full_page.jpg --output_path ./example/full_page_result.png --draw_target_boxes False --draw_overlay_text True
 ```
 
 Reading backend:
-- `sudachi` is the default and recommended backend.
-- You can still select Fugashi explicitly when needed.
-
-Fugashi example:
-```bash
-python -m src.furikanji.main <image_path> --reading_backend fugashi --output_path <output_path>
-```
+- Sudachi is the only supported backend.
 
 ## Vertical Ruby Fit
 

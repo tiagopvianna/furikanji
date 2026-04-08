@@ -9,7 +9,6 @@ description = "Adds furigana to kanji in images."
 requires-python = ">=3.8"
 dependencies = [
     "fire",
-    "fugashi",
     "jaconv",
     "loguru",
     "manga-ocr>=0.1.7",
@@ -26,20 +25,10 @@ dependencies = [
     "torchsummary",
     "torchvision>=0.8.1",
     "transformers>=4.25.0",
-    "tqdm>=4.41.0",
-    "yattag",
-]
-
-[project.optional-dependencies]
-unidic-lite = [
-    "fugashi[unidic-lite]",
-]
-unidic = [
-    "fugashi[unidic]",
-]
-sudachi = [
     "sudachipy",
     "sudachidict-core",
+    "tqdm>=4.41.0",
+    "yattag",
 ]
 
 [tool.setuptools.packages.find]

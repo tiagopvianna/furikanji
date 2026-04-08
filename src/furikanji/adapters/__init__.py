@@ -1,5 +1,5 @@
-from src.furikanji.adapters.fugashi_furigana_reading_generator import (
-    FugashiFuriganaReadingGenerator,
+from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+    SudachiFuriganaReadingGenerator,
 )
 from src.furikanji.application.interfaces import (
     FuriganaReadingGenerator,
@@ -16,17 +16,8 @@ __all__ = [
     "LocalizedTextRegion",
     "FuriganaReadingGenerator",
     "FuriganaSegment",
-    "FugashiFuriganaReadingGenerator",
+    "SudachiFuriganaReadingGenerator",
     "TextLocalizationResult",
     "TextLocalizerAdapter",
     "TextTranscriberAdapter",
 ]
-
-try:
-    from src.furikanji.adapters.sudachi_furigana_reading_generator import (
-        SudachiFuriganaReadingGenerator,
-    )
-
-    __all__.append("SudachiFuriganaReadingGenerator")
-except Exception:
-    pass
