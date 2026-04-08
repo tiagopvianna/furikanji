@@ -99,6 +99,10 @@ class SudachiFuriganaReadingGenerator(FuriganaReadingGenerator):
                 base_text=base_text,
                 reading=reading,
             )
+            reading = self._trim_redundant_kana_suffix(
+                base_text=base_text,
+                reading=reading,
+            )
             segments.append(
                 FuriganaSegment(
                     base_text=base_text,
@@ -187,3 +191,36 @@ class SudachiFuriganaReadingGenerator(FuriganaReadingGenerator):
 
     def _requires_furigana(self, base_text: str, reading: str) -> bool:
         return bool(self._kanji_regex.search(base_text) and base_text != reading)
+
+    def _trim_redundant_kana_suffix(self, base_text: str, reading: str) -> str:
+        base_hira = self._to_hiragana(base_text)
+        reading_hira = self._to_hiragana(reading)
+        trim_count = 0
+
+        while trim_count < len(base_text) and trim_count < len(reading):
+            base_char = base_hira[len(base_hira) - 1 - trim_count]
+            reading_char = reading_hira[len(reading_hira) - 1 - trim_count]
+            if base_char != reading_char:
+                break
+            if not (self._is_kana(base_char) and self._is_kana(reading_char)):
+                break
+            trim_count += 1
+
+        if trim_count == 0:
+            return reading
+        if trim_count >= len(reading):
+            return base_text
+        return reading[:-trim_count]
+
+    @staticmethod
+    def _to_hiragana(text: str) -> str:
+        return jaconv.kata2hira(text)
+
+    @staticmethod
+    def _is_kana(ch: str) -> bool:
+        codepoint = ord(ch)
+        return (
+            0x3040 <= codepoint <= 0x309F
+            or 0x30A0 <= codepoint <= 0x30FF
+            or 0xFF66 <= codepoint <= 0xFF9D
+        )

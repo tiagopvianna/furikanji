@@ -157,5 +157,124 @@ class TestSudachiFuriganaReadingGenerator(unittest.TestCase):
         self.assertEqual(segments[0].base_text, "私")
         self.assertEqual(segments[0].reading, "わたくし")
 
+    @patch(
+        "src.furikanji.adapters.sudachi_furigana_reading_generator.dictionary.Dictionary"
+    )
+    def test_trims_kana_suffix_for_mixed_token(self, dictionary_mock):
+        tokenizer_mock = dictionary_mock.return_value.create.return_value
+        tokenizer_mock.tokenize.return_value = [
+            _FakeMorpheme("私たち", "ワタシタチ"),
+        ]
+
+        from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+            SudachiFuriganaReadingGenerator,
+        )
+
+        generator = SudachiFuriganaReadingGenerator()
+        segments = generator.resolve_line_segments("私たち")
+
+        self.assertEqual(segments[0].reading, "わたし")
+        self.assertTrue(segments[0].needs_furigana)
+
+    @patch(
+        "src.furikanji.adapters.sudachi_furigana_reading_generator.dictionary.Dictionary"
+    )
+    def test_trims_okurigana_suffix(self, dictionary_mock):
+        tokenizer_mock = dictionary_mock.return_value.create.return_value
+        tokenizer_mock.tokenize.return_value = [
+            _FakeMorpheme("食べる", "タベル"),
+        ]
+
+        from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+            SudachiFuriganaReadingGenerator,
+        )
+
+        generator = SudachiFuriganaReadingGenerator()
+        segments = generator.resolve_line_segments("食べる")
+
+        self.assertEqual(segments[0].reading, "た")
+        self.assertTrue(segments[0].needs_furigana)
+
+    @patch(
+        "src.furikanji.adapters.sudachi_furigana_reading_generator.dictionary.Dictionary"
+    )
+    def test_pure_kanji_keeps_full_reading_when_no_overlap(self, dictionary_mock):
+        tokenizer_mock = dictionary_mock.return_value.create.return_value
+        tokenizer_mock.tokenize.return_value = [
+            _FakeMorpheme("学校", "ガッコウ"),
+        ]
+
+        from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+            SudachiFuriganaReadingGenerator,
+        )
+
+        generator = SudachiFuriganaReadingGenerator()
+        segments = generator.resolve_line_segments("学校")
+
+        self.assertEqual(segments[0].reading, "がっこう")
+        self.assertTrue(segments[0].needs_furigana)
+
+    @patch(
+        "src.furikanji.adapters.sudachi_furigana_reading_generator.dictionary.Dictionary"
+    )
+    def test_full_overlap_disables_furigana(self, dictionary_mock):
+        tokenizer_mock = dictionary_mock.return_value.create.return_value
+        tokenizer_mock.tokenize.return_value = [
+            _FakeMorpheme("かな", "カナ"),
+        ]
+
+        from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+            SudachiFuriganaReadingGenerator,
+        )
+
+        generator = SudachiFuriganaReadingGenerator()
+        segments = generator.resolve_line_segments("かな")
+
+        self.assertEqual(segments[0].reading, "かな")
+        self.assertFalse(segments[0].needs_furigana)
+
+    @patch(
+        "src.furikanji.adapters.sudachi_furigana_reading_generator.dictionary.Dictionary"
+    )
+    def test_override_applies_before_suffix_trim(self, dictionary_mock):
+        tokenizer_mock = dictionary_mock.return_value.create.return_value
+        tokenizer_mock.tokenize.return_value = [
+            _FakeMorpheme("私たち", "ワタクシタチ", ("代名詞", "*", "*")),
+            _FakeMorpheme("が", "ガ", ("助詞", "格助詞", "一般")),
+        ]
+
+        rules_payload = {
+            "rules": [
+                {
+                    "kanji": "私たち",
+                    "reading": "わたしたち",
+                    "pos_contains": ["代名詞"],
+                    "next_surfaces": ["が"],
+                    "prev_surfaces": [],
+                    "exception_prefixes": [],
+                    "exception_suffixes": [],
+                }
+            ]
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            json.dump(rules_payload, handle, ensure_ascii=False)
+            rules_path = handle.name
+
+        from src.furikanji.adapters.sudachi_furigana_reading_generator import (
+            SudachiFuriganaReadingGenerator,
+        )
+
+        try:
+            generator = SudachiFuriganaReadingGenerator(
+                reading_overrides_path=rules_path
+            )
+            segments = generator.resolve_line_segments("私たちが")
+        finally:
+            os.remove(rules_path)
+
+        self.assertEqual(segments[0].reading, "わたし")
+        self.assertTrue(segments[0].needs_furigana)
+
+
 if __name__ == "__main__":
     unittest.main()
