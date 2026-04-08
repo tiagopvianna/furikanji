@@ -4,9 +4,12 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from src.furikanji.application.furigana_renderer import (
+    DrawCommand,
     EraseConfig,
     FuriganaRenderConfig,
     FuriganaRenderer,
+    PageRenderPlan,
+    RegionRenderPlan,
 )
 
 
@@ -44,6 +47,47 @@ class TestFuriganaRendererErase(unittest.TestCase):
         planned_mock.assert_called_once_with(
             draw=self.draw, planned_bounds=planned_bounds
         )
+
+    def test_paint_page_render_plan_erases_all_regions_before_drawing_any_region(self):
+        renderer = FuriganaRenderer(
+            furigana_reading_generator=FakeFuriganaReadingGenerator(),
+            config=FuriganaRenderConfig(erase=EraseConfig(strategy="both")),
+        )
+        page_render_plan = PageRenderPlan(
+            region_plans=[
+                RegionRenderPlan(
+                    draw_commands=[],
+                    planned_bounds=(0.0, 0.0, 10.0, 10.0),
+                    line_outline_points=[[[0, 0], [10, 0], [10, 10], [0, 10]]],
+                ),
+                RegionRenderPlan(
+                    draw_commands=[DrawCommand(text="a", x=5.0, y=5.0, font=None)],
+                    planned_bounds=(20.0, 20.0, 30.0, 30.0),
+                    line_outline_points=[[[20, 20], [30, 20], [30, 30], [20, 30]]],
+                ),
+            ]
+        )
+        call_order: list[str] = []
+
+        def erase_side_effect(*args, **kwargs):
+            call_order.append("erase")
+
+        def paint_side_effect(*args, **kwargs):
+            call_order.append("paint")
+
+        with patch.object(
+            renderer, "_erase_background_for_region", side_effect=erase_side_effect
+        ) as erase_mock, patch.object(
+            renderer, "_paint_planned_region_text", side_effect=paint_side_effect
+        ) as paint_mock:
+            renderer.paint_page_render_plan(
+                draw=self.draw,
+                page_render_plan=page_render_plan,
+            )
+
+        self.assertEqual(erase_mock.call_count, 2)
+        self.assertEqual(paint_mock.call_count, 2)
+        self.assertEqual(call_order, ["erase", "erase", "paint", "paint"])
 
 
 if __name__ == "__main__":

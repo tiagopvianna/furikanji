@@ -320,7 +320,7 @@ class FuriganaRenderer:
     ) -> None:
         for region_index, region_plan in enumerate(page_render_plan.region_plans):
             logger.trace(
-                "Painting region {}: draw_commands={}, planned_bounds={}",
+                "Erasing region {}: draw_commands={}, planned_bounds={}",
                 region_index,
                 len(region_plan.draw_commands),
                 region_plan.planned_bounds,
@@ -329,6 +329,13 @@ class FuriganaRenderer:
                 draw=draw,
                 line_outline_points=region_plan.line_outline_points,
                 planned_bounds=region_plan.planned_bounds,
+            )
+        for region_index, region_plan in enumerate(page_render_plan.region_plans):
+            logger.trace(
+                "Painting region {}: draw_commands={}, planned_bounds={}",
+                region_index,
+                len(region_plan.draw_commands),
+                region_plan.planned_bounds,
             )
             self._paint_planned_region_text(
                 draw=draw, draw_commands=region_plan.draw_commands
