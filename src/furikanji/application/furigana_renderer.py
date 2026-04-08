@@ -101,6 +101,7 @@ class SizingConfig:
     probe_glyph: str = "田"
     min_main_size: int = 8
     max_main_size: int = 120
+    global_scale: float = 1.05
     main_scale_bias: float = 1.0
     furigana_ratio: float = 0.5
     min_furigana_size: int = 6
@@ -877,8 +878,25 @@ class FuriganaRenderer:
                 else:
                     self._ruby_fit_stats["shrunk"] += 1
                 return font, spacing, y_start
-        self._ruby_fit_stats["skipped"] += 1
-        return None
+        # If nothing fits within budget, still render at minimum settings
+        # instead of skipping the ruby entirely.
+        min_font = (
+            furigana_font
+            if min_size == furigana_size
+            else self._load_japanese_font(min_size)
+        )
+        min_height = self._measure_vertical_ruby_height(
+            draw=draw,
+            text=reading,
+            font=min_font,
+            spacing=min_spacing,
+        )
+        if self.config.vertical.ruby_align == "center":
+            y_start = budget_start + (budget_height - min_height) / 2
+        else:
+            y_start = budget_start
+        self._ruby_fit_stats["shrunk"] += 1
+        return min_font, min_spacing, y_start
 
     def _measure_vertical_ruby_height(
         self,
@@ -1287,6 +1305,16 @@ class FuriganaRenderer:
                 ),
                 main_size,
             )
+
+        scale = self.config.sizing.global_scale
+        scaled_main_size = self._clamp_main_size(round(main_size * scale))
+        logger.trace(
+            "Region sizing scale: base_main_size={}, global_scale={}, scaled_main_size={}",
+            main_size,
+            scale,
+            scaled_main_size,
+        )
+        main_size = scaled_main_size
 
         furigana_size = max(
             self.config.sizing.min_furigana_size,

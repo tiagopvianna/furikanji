@@ -96,7 +96,7 @@ class TestFuriganaRendererVerticalRubyFit(unittest.TestCase):
         self.assertTrue(ruby_commands)
         self.assertTrue(all(command.font.size == 8 for command in ruby_commands))
 
-    def test_vertical_ruby_skips_when_min_size_and_spacing_cannot_fit(self):
+    def test_vertical_ruby_renders_at_minimum_when_budget_is_still_too_small(self):
         renderer = FuriganaRenderer(
             furigana_reading_generator=FakeFuriganaReadingGenerator(),
             config=FuriganaRenderConfig(
@@ -123,8 +123,10 @@ class TestFuriganaRendererVerticalRubyFit(unittest.TestCase):
             furigana_spacing=2,
         )
 
-        self.assertEqual(len(commands), 1)
+        self.assertEqual(len(commands), 6)
         self.assertEqual(commands[0].text, "漢")
+        ruby_commands = commands[1:]
+        self.assertTrue(all(command.font.size == 6 for command in ruby_commands))
 
 
 if __name__ == "__main__":

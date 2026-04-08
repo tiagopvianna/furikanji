@@ -151,6 +151,38 @@ class TestFuriganaRendererSizing(unittest.TestCase):
         self.assertEqual(kwargs["target_dimension"], 20.0)
         self.assertFalse(kwargs["vertical"])
 
+    def test_resolve_region_sizing_applies_global_scale(self):
+        renderer = FuriganaRenderer(
+            furigana_reading_generator=FakeFuriganaReadingGenerator(),
+            config=FuriganaRenderConfig(
+                sizing=SizingConfig(
+                    global_scale=1.3,
+                    furigana_ratio=0.5,
+                    char_spacing_ratio=0.25,
+                    furigana_spacing_ratio=0.2,
+                )
+            ),
+        )
+        text_region = {
+            "bounding_box": [0, 0, 120, 40],
+            "is_vertical": False,
+            "estimated_font_size": 24,
+            "line_outline_points": [
+                [[0, 0], [100, 0], [100, 20], [0, 20]],
+            ],
+            "line_texts": ["text"],
+        }
+
+        with patch.object(
+            renderer, "_estimate_main_size_from_target_dimension", return_value=20
+        ):
+            sizing = renderer._resolve_region_sizing(text_region, self.draw)
+
+        self.assertEqual(sizing.main_size, 26)
+        self.assertEqual(sizing.furigana_size, 13)
+        self.assertEqual(sizing.char_spacing, 6)
+        self.assertEqual(sizing.furigana_spacing, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
