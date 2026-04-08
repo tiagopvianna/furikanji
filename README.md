@@ -4,19 +4,15 @@ Adds furigana to kanji in images.
 
 ## Examples
 
-### Sample 1
-
 | Input | Output |
 |---|---|
 | ![sample input](example/sample.png) | ![sample output](example/sample_result.png) |
 
-### Sample 2
 
 | Input | Output |
 |---|---|
 | ![sample 2 input](example/sample_2.png) | ![sample 2 output](example/sample_2_result.png) |
 
-### Full page
 
 | Input | Output |
 |---|---|
